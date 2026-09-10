@@ -7086,8 +7086,21 @@ window.addEventListener('pageshow', ()=>setTimeout(reassertInfo, 50));
   /* ---------- 로컬 모델 (Ollama 등 · OpenAI 호환) ---------- */
   const AILOCAL = 'EDUCOST-대시보드-로컬모델';
   const AILOCAL_DEF = {url:'http://localhost:11434/v1', model:'qwen2.5:7b-instruct'};
+  /* 보안: 이 PC(localhost)·내부망(10.x · 172.16~31.x · 192.168.x) 주소만 허용 — 내역이 외부 서버로 나가지 않게 */
+  function isLocalAiUrl(u){
+    try{
+      const x = new URL(u);
+      if(x.protocol !== 'http:' && x.protocol !== 'https:') return false;
+      const h = x.hostname.replace(/^\[|\]$/g,'').toLowerCase();
+      if(h === 'localhost' || h === '::1') return true;
+      const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+      if(!m) return false;
+      const a = +m[1], b = +m[2];
+      return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+    }catch(e){ return false; }
+  }
   function aiCfg(){
-    try{ const j = JSON.parse(localStorage.getItem(AILOCAL)||'null'); if(j && j.url) return {url:j.url, model:j.model||AILOCAL_DEF.model}; }catch(e){}
+    try{ const j = JSON.parse(localStorage.getItem(AILOCAL)||'null'); if(j && j.url && isLocalAiUrl(j.url)) return {url:j.url, model:j.model||AILOCAL_DEF.model}; }catch(e){}
     return {url:AILOCAL_DEF.url, model:AILOCAL_DEF.model};
   }
   const aiReady = ()=> !!aiCfg().url;
@@ -7095,6 +7108,7 @@ window.addEventListener('pageshow', ()=>setTimeout(reassertInfo, 50));
     const c = aiCfg();
     const u = prompt('로컬 모델 서버 주소입니다. 올라마(Ollama)를 이 PC에 깔았으면 그대로 두시면 됩니다.\n\n예) http://localhost:11434/v1', c.url);
     if(u === null) return false;
+    if(!isLocalAiUrl(String(u).trim())){ alert('이 PC(localhost)나 내부망 주소(10.x · 172.16~31.x · 192.168.x)만 쓸 수 있습니다.\n내역이 외부 서버로 나가지 않도록 막아 두었습니다.'); return false; }
     const m = prompt('쓸 모델 이름입니다. 명령창에서 「ollama list」로 확인합니다.\n\n예) qwen2.5:7b-instruct · qwen2.5:14b-instruct · gemma3:12b', c.model);
     if(m === null) return false;
     try{ localStorage.setItem(AILOCAL, JSON.stringify({url:String(u).trim().replace(/\/+$/,''), model:String(m).trim()})); }catch(e){}
@@ -7110,6 +7124,7 @@ window.addEventListener('pageshow', ()=>setTimeout(reassertInfo, 50));
   function aiVendorName(){ return '로컬 모델 ' + aiCfg().model; }
   async function aiComplete(req){
     const c = aiCfg();
+    if(!isLocalAiUrl(c.url)) throw new Error('로컬 모델 주소가 이 PC나 내부망 주소가 아니어서 보내지 않았습니다. 「로컬 모델 설정」에서 다시 넣으십시오.');
     const user = req.messages.map(m=>m.content).join('\n\n');
     let r;
     try{
@@ -7117,7 +7132,7 @@ window.addEventListener('pageshow', ()=>setTimeout(reassertInfo, 50));
         body:JSON.stringify({model:c.model, temperature:0.2, stream:false, max_tokens:req.max_tokens,
           messages:[{role:'system', content:req.system},{role:'user', content:user}]})});
     }catch(e){
-      throw new Error('로컬 모델 서버(' + c.url + ')에 닿지 못했습니다. ① 올라마가 켜져 있는지 ② 브라우저에서 부를 수 있도록 OLLAMA_ORIGINS=* 를 넣고 다시 켰는지 확인하십시오.');
+      throw new Error('로컬 모델 서버(' + c.url + ')에 닿지 못했습니다. ① 올라마가 켜져 있는지 ② 브라우저에서 부를 수 있도록 OLLAMA_ORIGINS=https://seum8660.github.io 를 넣고 다시 켰는지 확인하십시오.');
     }
     if(!r.ok){
       let m = r.status + '';
