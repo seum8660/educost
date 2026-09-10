@@ -1864,6 +1864,7 @@ function uiPrompt(msg, def){
 }
 /* 내역서 대시보드에서 세부품명을 받아 「대상 항목」으로 자동 연결 */
 window.addEventListener('message', ev=>{
+  if(ev.source !== window.parent || window.parent === window) return;   /* 보안: 바깥 대시보드가 보낸 메시지만 받는다 */
   const d = ev.data;
   if(d && d.app === 'EDUCOST-SAVE'){ try{ saveLocal(); }catch(e){} return; }
   if(!d || d.app !== 'EDUCOST-BOQ-ITEMS' || !Array.isArray(d.rows)) return;
@@ -3456,6 +3457,11 @@ function compile(sheet, f){
     (m,a,b)=> put(b ? 'R('+JSON.stringify(sheet)+',"'+a.replace(/\$/g,'')+'","'+b.replace(/\$/g,'')+'")'
                     : 'C('+JSON.stringify(sheet)+',"'+a.replace(/\$/g,'')+'")'));
   s = s.replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
+  /* 보안: 셀참조·문자열·숫자·연산자·지원 함수 외의 글자가 남으면 실행하지 않는다 (조작된 엑셀 수식의 코드 실행 차단) */
+  const rest = s.replace(/\u0001\d+\u0001|\u0002\d+\u0002/g, ' ')
+                .replace(/\b(?:TRUNC|ROUNDDOWN|ROUND|SUM|SUMIF|COUNTIF|SMALL|RIGHTB)(?=\s*\()/g, ' ')
+                .replace(/\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, ' ');
+  if(!/^[\s+\-*\/(),.<>=!&|^?:]*$/.test(rest)){ const z = ()=>0; compiled.set(key, z); return z; }
   s = s.replace(/\u0002(\d+)\u0002/g, (m,i)=>refs[+i]);
   s = s.replace(/\u0001(\d+)\u0001/g, (m,i)=>JSON.stringify(lits[+i]));
   let fn;
@@ -5452,11 +5458,14 @@ document.getElementById('btnFromSimple') && (document.getElementById('btnFromSim
 let SIMPLE_TS = 0;
 /* 간단내역서 탭 안에서 열렸을 때 — 부모 화면이 보내오면 바로 반영 */
 window.addEventListener('message', e=>{
+  if(e.source !== window.parent || window.parent === window) return;   /* 보안: 이 화면을 품은 부모 화면이 보낸 것만 */
   const d = e.data;
   if(!d || d.type!=='EDUCOST-SIMPLE' || !d.payload || !d.payload.rows || !d.payload.rows.length) return;
   const p = d.payload;
   if(SIMPLE_TS === p.ts) return;
   SIMPLE_TS = p.ts;
+  const trusted = e.origin === location.origin || (location.protocol === 'file:' && e.origin === 'null');
+  if(!trusted && !confirm('다른 사이트(' + e.origin + ')에서 내역을 보내왔습니다.\n받으면 지금 화면의 내용이 바뀝니다. 받겠습니까?')) return;
   applySimple(p);
   const el = document.getElementById('simpleInfo');
   if(el) el.textContent = '간단내역서 탭에서 바로 받은 내역 · ' + p.rows.length + '개 항목';
@@ -5912,7 +5921,7 @@ document.getElementById('btnInfoLoad').onclick = ()=>{
 };
 document.getElementById('btnInfoTemp').onclick = ()=>{
   save();
-  try{ const f = document.getElementById('qtyFrame'); if(f && f.contentWindow) f.contentWindow.postMessage({app:'EDUCOST-SAVE'}, '*'); }catch(e){}
+  try{ const f = document.getElementById('qtyFrame'); if(f && f.contentWindow) f.contentWindow.postMessage({app:'EDUCOST-SAVE'}, '/'); }catch(e){}
   const t = new Date(), p = n => String(n).padStart(2,'0');
   toast('임시저장했습니다 (' + p(t.getHours()) + ':' + p(t.getMinutes()) + ') — 내역서와 물량산출이 함께 보관되어, 다음에 열면 그대로 이어집니다.');
 };
@@ -6922,7 +6931,7 @@ function boqItemsForQty(){
 function pushQtyItems(){
   const f = document.getElementById('qtyFrame');
   if(!f || !f.contentWindow) return;
-  f.contentWindow.postMessage({app:'EDUCOST-BOQ-ITEMS', rows:boqItemsForQty(), name:INFO.name, date:INFO.date}, '*');
+  f.contentWindow.postMessage({app:'EDUCOST-BOQ-ITEMS', rows:boqItemsForQty(), name:INFO.name, date:INFO.date}, '/')   /* 보안: 같은 출처의 안쪽 화면에만 전달 */;
 }
 document.getElementById('qtyFrame').addEventListener('load', ()=>{ slimQty(); pushQtyItems(); });
 /* 안쪽 대시보드의 자체 머리글은 감춘다 — 머리글이 두 번 겹치지 않게 */
