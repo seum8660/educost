@@ -6985,9 +6985,9 @@ window.addEventListener('pageshow', ()=>setTimeout(reassertInfo, 50));
   introTop();
   window.addEventListener('load', ()=>{ introTop(); requestAnimationFrame(introTop); setTimeout(introTop, 120); setTimeout(introTop, 400); });
   window.addEventListener('pageshow', introTop);
-  try{ if(localStorage.getItem(IK) === 'off') intro.classList.add('off'); }catch(e){}
+  /* 인트로는 열 때마다 먼저 보입니다 */
   function shut(){
-    intro.classList.add('off'); try{ localStorage.setItem(IK,'off'); }catch(e){}
+    intro.classList.add('off');
     /* 시작하기를 누르면 공사정보 탭으로 들어갑니다 */
     try{ if(typeof goInfoTab === 'function') goInfoTab(); }catch(e){}
   }
