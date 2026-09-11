@@ -623,7 +623,7 @@ body.sbon.sbmin #aiBack{right:276px}
       </ul>
     </aside>
     <div class="iwave" aria-hidden="true"><svg viewBox="0 0 2400 40" preserveAspectRatio="none"><path d="M0 20 C 100 0, 200 40, 300 20 S 500 0, 600 20 S 800 40, 900 20 S 1100 0, 1200 20 S 1400 40, 1500 20 S 1700 0, 1800 20 S 2000 40, 2100 20 S 2300 0, 2400 20 V40 H0 Z" fill="rgba(255,255,255,.10)"/></svg><svg class="w2" viewBox="0 0 2400 40" preserveAspectRatio="none"><path d="M0 26 C 100 12, 200 40, 300 26 S 500 12, 600 26 S 800 40, 900 26 S 1100 12, 1200 26 S 1400 40, 1500 26 S 1700 12, 1800 26 S 2000 40, 2100 26 S 2300 12, 2400 26 V40 H0 Z" fill="rgba(255,255,255,.14)"/></svg></div>
-    <div class="icfoot" style="top:795.781px"><span class="ijoke">이 화면은 감사를 대신 받지 않습니다. “대시보드가 그러던데요”는 감사장에서 0점 — 숫자는 확정 전에 사람 눈이 한 번 더 봅니다.</span><br>브라우저에서 바로 돌아갑니다 · 파일은 이 컴퓨터에만 보관됩니다<br><span class="icredit">제작 min · hoon · hyeok · young · eun · ra</span></div>
+    <div class="icfoot" style="top:795.781px"><span class="ijoke">이 화면은 감사를 대신 받지 않습니다. “대시보드가 그러던데요”는 감사장에서 0점 — 숫자는 확정 전에 사람 눈이 한 번 더 봅니다.</span><br>브라우저에서 바로 돌아갑니다 · 파일은 이 컴퓨터에만 보관됩니다<br><span class="icredit">제작 min · hoon · hyeok · young · eun · ra · 2026.9.11판</span></div>
   </section>
   <section class="ipage ipage2">
     <h2>일위대가·단가를 내 마음대로</h2>
@@ -3348,10 +3348,12 @@ function fixSheetRefs(wb){
   }
   return n;
 }
+var WB_PENDING = false;   /* 큰 내역서는 IndexedDB에 보관 — 화면이 뜬 뒤 불러옵니다 */
 try{ const s = JSON.parse(localStorage.getItem(LSKEY)||'null');
   if(s){
     OV = s.ov||{}; FOV = s.fov||{}; DEL = s.del||{}; ADD = s.add||{}; INFO = Object.assign(INFO, s.info||{});
     if(s.wb && s.wb.cells){ WB.cells = s.wb.cells; WB.meta = s.wb.meta; fixSheetRefs(WB); }
+    else if(s.wbIdb) WB_PENDING = true;
     for(const sh of Object.keys(ADD)){
       if(!WB.cells[sh]) continue;
       for(const a of Object.keys(ADD[sh])){
@@ -3362,12 +3364,26 @@ try{ const s = JSON.parse(localStorage.getItem(LSKEY)||'null');
   }
 }catch(e){}
 let WBREPLACED = false;
+let SAVE_ERR = null, WB_IDB_P = Promise.resolve(true);
+/* 임시저장 기록 — 브라우저 저장 한도(약 5MB)를 넘는 큰 내역서는 통합문서만 IndexedDB로 옮겨 보관합니다 */
+function lsPut(pay){
+  try{ localStorage.setItem(LSKEY, JSON.stringify(pay)); return; }
+  catch(e){
+    if(!pay.wb) throw e;
+    const wb = pay.wb, p2 = Object.assign({}, pay); delete p2.wb; p2.wbIdb = Date.now();
+    WB_IDB_P = idbPut('meta', {cells:wb.cells, meta:wb.meta}, 'tempWb').then(()=>true).catch(err=>{ SAVE_ERR = err; return false; });
+    localStorage.setItem(LSKEY, JSON.stringify(p2));
+  }
+}
 function save(){ try{
   const pay = {ov:OV, fov:FOV, del:DEL, add:ADD, info:INFO};
+  let old = null; try{ old = JSON.parse(localStorage.getItem(LSKEY)||'null'); }catch(e){}
   if(WBREPLACED) pay.wb = {cells:WB.cells, meta:WB.meta};
-  else { const old = JSON.parse(localStorage.getItem(LSKEY)||'null'); if(old && old.wb) pay.wb = old.wb; }
-  localStorage.setItem(LSKEY, JSON.stringify(pay));
-}catch(e){}
+  else if(old && old.wb) pay.wb = old.wb;
+  else if(old && old.wbIdb) pay.wbIdb = old.wbIdb;
+  SAVE_ERR = null;
+  lsPut(pay);
+}catch(e){ SAVE_ERR = e; }
   try{ if(typeof renderChg==='function' && document.getElementById('chgTable')) renderChg(); }catch(e){}
 }
 const rowOf = addr => +addr.match(/\d+$/)[0];
@@ -5284,6 +5300,25 @@ function goSheetsTab(){
     if(b) b.click();
   }
 }
+/* IndexedDB에 보관한 큰 내역서를 화면이 뜬 뒤 불러옵니다 */
+window.addEventListener('load', async ()=>{
+  if(!WB_PENDING) return;
+  try{
+    const wb = await idbGet('meta', 'tempWb');
+    if(!wb || !wb.cells) throw new Error('보관된 내역서를 찾지 못했습니다.');
+    WB.cells = wb.cells; WB.meta = wb.meta; fixSheetRefs(WB);
+    for(const sh of Object.keys(ADD)){
+      if(!WB.cells[sh]) continue;
+      for(const a of Object.keys(ADD[sh])){
+        WB.cells[sh][a] = ADD[sh][a];
+        const r = +a.match(/\d+$/)[0]; if(r > WB.meta[sh].maxR) WB.meta[sh].maxR = r;
+      }
+    }
+    WB_PENDING = false; _grp = null;
+    renderWage(); renderRates(); renderSheet();
+    try{ syncInfoNow(); }catch(e){}
+  }catch(e){ uiAlert('임시저장한 내역서를 불러오지 못했습니다.\n' + e.message); }
+});
 /* 임시저장 불러오기 뒤에는 인트로를 건너뛰고 내역서 탭을 엽니다 */
 (function(){
   let on = false;
@@ -5613,7 +5648,8 @@ document.getElementById('workFile').addEventListener('change', async e=>{
     if(!(await uiConfirm('이 작업 파일로 바꿉니다. 지금 화면의 내용은 사라집니다.'))) return;
     const stored = {ov:p.ov||{}, fov:p.fov||{}, del:p.del||{}, add:p.add||{}, info:p.info||INFO};
     if(p.wb && p.wb.cells) stored.wb = p.wb;
-    localStorage.setItem(LSKEY, JSON.stringify(stored));
+    lsPut(stored); await WB_IDB_P;
+    if(SAVE_ERR) throw SAVE_ERR;
     location.reload();
   }catch(err){ toast('읽지 못했습니다: '+err.message); }
 });
@@ -6003,13 +6039,20 @@ document.getElementById('btnInfoSave').onclick = ()=> document.getElementById('b
 document.getElementById('btnInfoLoad').onclick = async ()=>{
   if(!storageOK()){ uiAlert('이 화면에서는 브라우저 저장공간을 쓸 수 없어 임시저장·불러오기가 되지 않습니다.\n(Claude 미리보기 등 제한된 화면)\n\n파일을 내려받아 크롬·엣지에서 열거나 게시 주소에서 쓰십시오.'); return; }
   if(!(await uiConfirm('임시저장해 둔 상태로 되돌립니다.\n지금 화면의 수정 내용은 사라집니다. 진행합니까.'))) return;
+  await WB_IDB_P;
   try{ sessionStorage.setItem('EDUCOST-불러오기후-내역서','1'); }catch(e){}   /* 다시 열리면 내역서 탭으로 */
   location.reload();
 };
-document.getElementById('btnInfoTemp').onclick = ()=>{
+document.getElementById('btnInfoTemp').onclick = async ()=>{
   if(!storageOK()){ uiAlert('이 화면에서는 브라우저 저장공간을 쓸 수 없어 임시저장·불러오기가 되지 않습니다.\n(Claude 미리보기 등 제한된 화면)\n\n파일을 내려받아 크롬·엣지에서 열거나 게시 주소에서 쓰십시오.'); return; }
   save();
   try{ const f = document.getElementById('qtyFrame'); if(f && f.contentWindow) f.contentWindow.postMessage({app:'EDUCOST-SAVE'}, '/'); }catch(e){}
+  await WB_IDB_P;
+  if(SAVE_ERR){
+    const q = /quota/i.test(String(SAVE_ERR && (SAVE_ERR.name + SAVE_ERR.message)));
+    uiAlert('임시저장하지 못했습니다.\n' + (q ? '브라우저 저장공간이 가득 찼습니다. 「내역서 엑셀 내보내기」로 파일을 받아 두십시오.' : String(SAVE_ERR.message || SAVE_ERR)));
+    return;
+  }
   const t = new Date(), p = n => String(n).padStart(2,'0');
   toast('임시저장했습니다 (' + p(t.getHours()) + ':' + p(t.getMinutes()) + ') — 내역서와 물량산출이 함께 보관되어, 다음에 열면 그대로 이어집니다.');
 };
