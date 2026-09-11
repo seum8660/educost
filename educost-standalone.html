@@ -616,6 +616,7 @@ body.sbon.sbmin #aiBack{right:276px}
     <aside class="iupd" aria-label="업데이트">
       <h4><b>업데이트</b> 최근 바뀐 것</h4>
       <ul>
+        <li><time>2026 · 09 · 11</time>「파일로 저장」·「파일 불러오기」 — 작업을 암호 파일(.educost)로 저장해 두었다가 다른 날·다른 PC에서 이어 씁니다.</li>
         <li><time>2026 · 09 · 10</time>AI도우미가 이 컴퓨터에서 도는 로컬 모델만 씁니다. 외부 AI 서비스를 부르지 않습니다.</li>
         <li><time>2026 · 09 · 10</time>내역서 모음을 「팀 공유폴더 연동」과 「엑셀 직접 추가」 두 가지로 정리했습니다. 폴더는 한 번만 연결하면 됩니다.</li>
         <li><time>2026 · 09 · 10</time>자체 검토 — 수량 누락, 끊긴 수식, 요율 이상, 재료비 단가를 한 번에 짚습니다.</li>
@@ -723,9 +724,9 @@ body.sbon.sbmin #aiBack{right:276px}
     <div style="flex:0 0 auto">
       <button class="mini" id="btnIntro">인트로</button>
       <button class="mini" id="btnResetAll">초기화</button>
-      <button class="mini" id="btnInfoSave" hidden>저장</button>
       <button class="mini" id="btnInfoTemp">임시저장</button>
-      <button class="mini" id="btnInfoLoad">불러오기</button>
+      <button class="mini" id="btnInfoSave" title="암호를 걸어 작업 파일(.educost)로 내려받습니다">파일로 저장</button>
+      <button class="mini" id="btnInfoLoad" title="저장해 둔 작업 파일(.educost)을 엽니다">파일 불러오기</button>
       <button class="mini primaryish" id="btnExportTop">내역서 엑셀 내보내기</button>
       <input type="file" id="sideFile" accept=".xlsx,.json" hidden>
     </div>
@@ -798,7 +799,7 @@ body.sbon.sbmin #aiBack{right:276px}
       <div class="ph"><b>3 · 저장과 내보내기</b><span>상단 「내역서 엑셀 내보내기」로 내려놓습니다 · 아래는 지금까지 고친 내역입니다</span></div>
       <div class="prow" hidden>
         <button class="mini" id="btnWorkSave" hidden>작업 파일로 저장</button>
-        <input type="file" id="workFile" accept=".json" hidden>
+        <input type="file" id="workFile" accept=".educost,.json" hidden>
         <button class="mini" id="btnWorkLoad" hidden>작업 파일 불러오기</button>
         <label style="font-size:12px; color:var(--sub); display:flex; align-items:center; gap:5px">
           <input type="checkbox" id="chkXlsxFormula" checked>수식 연결로 내보내기</label>
@@ -3628,9 +3629,12 @@ function colPx(sh, i, meta){
 function mergeMaps(sh, meta){
   const anchor = {}, covered = {};
   (((meta || WB.meta)[sh].merges)||[]).forEach(ref=>{
-    const [a,b] = ref.split(':');
+    const [a,b] = String(ref).split(':');
+    if(!a || !b) return;
     const m1 = a.match(/([A-Z]+)(\d+)/), m2 = b.match(/([A-Z]+)(\d+)/);
+    if(!m1 || !m2) return;
     const c1=colIdx(m1[1]), c2=colIdx(m2[1]), r1=+m1[2], r2=+m2[2];
+    if(!(c2>=c1 && r2>=r1) || (c2-c1+1)*(r2-r1+1) > 50000) return;   /* 비정상적으로 큰 병합은 무시 — 화면 멈춤 방지 */
     anchor[a] = {c1,c2,r1,r2};
     for(let r=r1;r<=r2;r++) for(let c=c1;c<=c2;c++){ const k=colName(c)+r; if(k!==a) covered[k]=1; }
   });
@@ -4826,7 +4830,7 @@ document.getElementById('impFile').addEventListener('change', async e=>{
   if(/\.educost$/i.test(f.name)){
     e.target.value = '';
     try{
-      if(f.size > 20*1024*1024) throw new Error('파일이 너무 큽니다.');
+      if(f.size > 60*1024*1024) throw new Error('파일이 너무 큽니다.');
       const pack = JSON.parse(await f.text());
       const pw = await askPassword('암호 파일 열기 — ' + f.name);
       if(pw === null){ document.getElementById('impInfo').textContent = '열기를 취소했습니다.'; return; }
@@ -5550,7 +5554,127 @@ async function decryptEducost(pack, pw){
   let pt;
   try{ pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:secB64(pack.iv)}, key, secB64(pack.ct)); }
   catch(e){ throw new Error('암호가 맞지 않거나 파일이 손상되었습니다.'); }
-  return JSON.parse(new TextDecoder().decode(pt));
+  let u8 = new Uint8Array(pt);
+  if(pack.z === 'gzip'){ const un = await zipBytes(u8, 'out'); if(!un) throw new Error('이 브라우저는 압축 풀기를 지원하지 않습니다.'); u8 = un; }
+  return JSON.parse(new TextDecoder().decode(u8));
+}
+/* ---------- 작업 파일(암호) 저장·불러오기 — 파일은 이 PC에만 저장되고 서버를 거치지 않습니다 ---------- */
+function secB64enc(u8){ let s = ''; for(let i=0; i<u8.length; i+=0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i+0x8000)); return btoa(s); }
+async function zipBytes(u8, mode){
+  if(typeof CompressionStream === 'undefined') return null;
+  const st = new Blob([u8]).stream().pipeThrough(mode === 'in' ? new CompressionStream('gzip') : new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(st).arrayBuffer());
+}
+async function encryptEducost(obj, pw){
+  if(!(window.crypto && crypto.subtle)) throw new Error('이 브라우저는 암호 저장을 지원하지 않습니다. 크롬·엣지 최신판을 쓰십시오.');
+  let data = new TextEncoder().encode(JSON.stringify(obj)), z;
+  const zz = await zipBytes(data, 'in'); if(zz){ data = zz; z = 'gzip'; }
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iter = 600000;
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({name:'PBKDF2', salt, iterations:iter, hash:'SHA-256'}, base, {name:'AES-GCM', length:256}, false, ['encrypt']);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, data));
+  const pack = {app:'EDUCOST-SECURE', v:1, kdf:'PBKDF2-SHA256', iter, salt:secB64enc(salt), iv:secB64enc(iv), ct:secB64enc(ct)};
+  if(z) pack.z = z;
+  return pack;
+}
+/* 새 암호 정하기 — 두 번 입력, 6자 이상 */
+function askNewPassword(title){
+  return new Promise(res=>{
+    const bk = document.createElement('div');
+    bk.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10000;display:flex;align-items:center;justify-content:center';
+    const ip = 'width:100%;box-sizing:border-box;padding:8px;font-size:14px;border:1px solid var(--line,#ccc);border-radius:6px;margin-top:6px';
+    bk.innerHTML = '<div role="dialog" aria-modal="true" style="background:var(--paper,#fff);border:1px solid var(--line,#ccc);border-radius:10px;padding:18px 20px;width:360px;max-width:92vw;box-shadow:0 8px 30px rgba(0,0,0,.2)">'
+      + '<b style="font-size:14px"></b><div style="font-size:12px;color:var(--sub,#666);margin:6px 0 4px;line-height:1.6">파일을 열 때 쓸 암호를 정하십시오 (6자 이상).<br>암호는 파일에 들어가지 않으며, 잊으면 누구도 열 수 없습니다.</div>'
+      + '<input type="password" data-p1 autocomplete="new-password" placeholder="암호" style="'+ip+'">'
+      + '<input type="password" data-p2 autocomplete="new-password" placeholder="암호 확인" style="'+ip+'">'
+      + '<div data-err style="font-size:12px;color:#b42318;min-height:18px;margin-top:6px"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px"><button class="mini" data-x>취소</button><button class="mini primaryish" data-ok>저장</button></div></div>';
+    bk.querySelector('b').textContent = title;
+    const p1 = bk.querySelector('[data-p1]'), p2 = bk.querySelector('[data-p2]'), er = bk.querySelector('[data-err]');
+    const done = v => { bk.remove(); res(v); };
+    const ok = ()=>{
+      if(p1.value.length < 6){ er.textContent = '암호는 6자 이상이어야 합니다.'; p1.focus(); return; }
+      if(p1.value !== p2.value){ er.textContent = '두 암호가 서로 다릅니다.'; p2.focus(); return; }
+      done(p1.value);
+    };
+    bk.querySelector('[data-x]').onclick = ()=> done(null);
+    bk.querySelector('[data-ok]').onclick = ok;
+    [p1, p2].forEach(i=> i.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); if(i===p1) p2.focus(); else ok(); } if(e.key==='Escape') done(null); }));
+    document.body.appendChild(bk); setTimeout(()=>p1.focus(), 30);
+  });
+}
+/* 파일에서 들어온 작업 내용 검증 — 형식에 맞지 않는 값은 버립니다 */
+function cleanWork(p){
+  const SH = ['원가계산서','공종별집계표','공종별내역서','일위대가목록','일위대가','단가대비표','공사설정'];
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const ADDR = /^[A-Z]{1,3}\d{1,6}$/, REF = /^[A-Z]{1,3}\d{1,6}:[A-Z]{1,3}\d{1,6}$/;
+  const cstr = v => String(v).slice(0, 4000);
+  const cell = c => {
+    if(!isObj(c)) return null;
+    const o = {s: Number.isInteger(c.s) && c.s >= 0 && c.s < 100000 ? c.s : 0};
+    if(typeof c.f === 'string') o.f = cstr(c.f);
+    if(typeof c.v === 'number' && isFinite(c.v)) o.v = c.v; else if(typeof c.v === 'string') o.v = cstr(c.v); else o.v = 0;
+    return o;
+  };
+  const cellsOf = src => { const out = {}; if(!isObj(src)) return out;
+    for(const sh of SH){ if(!isObj(src[sh])) continue; out[sh] = {};
+      for(const a of Object.keys(src[sh])){ if(!ADDR.test(a)) continue; const c = cell(src[sh][a]); if(c) out[sh][a] = c; } }
+    return out; };
+  const metaOf = src => { const out = {}; if(!isObj(src)) return out;
+    for(const sh of SH){ const m = src[sh]; if(!isObj(m)) continue;
+      const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v) && v >= lo && v <= hi) ? v : d;
+      out[sh] = {maxR:num(m.maxR,0,200000,0)|0, maxC:num(m.maxC,0,300,0)|0,
+        cols:(Array.isArray(m.cols)?m.cols:[]).slice(0,400).filter(isObj).map(c=>({min:num(c.min,1,300,1)|0, max:num(c.max,1,300,1)|0, w:num(c.w,0,500,8.43), hidden:!!c.hidden})),
+        merges:(Array.isArray(m.merges)?m.merges:[]).filter(r=>typeof r==='string' && REF.test(r)).slice(0,20000)};
+      if(isObj(m.blank)){ out[sh].blank = {}; for(const a of Object.keys(m.blank)) if(ADDR.test(a) && Number.isInteger(m.blank[a])) out[sh].blank[a] = m.blank[a]; }
+      if(isObj(m.rowHt)){ out[sh].rowHt = {}; for(const r of Object.keys(m.rowHt)) if(/^\d{1,6}$/.test(r)) out[sh].rowHt[r] = num(m.rowHt[r],0,500,15); }
+    }
+    if(typeof src.__styles === 'string' && /^\s*<\?xml|<styleSheet/.test(src.__styles)) out.__styles = src.__styles.slice(0, 5*1024*1024);
+    return out; };
+  const byAddr = (src, fn) => { const out = {}; if(!isObj(src)) return out;
+    for(const sh of SH){ if(!isObj(src[sh])) continue; out[sh] = {};
+      for(const a of Object.keys(src[sh])){ if(!ADDR.test(a)) continue; const v = fn(src[sh][a]); if(v !== undefined) out[sh][a] = v; } }
+    return out; };
+  const w = {
+    info:{}, ov: byAddr(p.ov, v => (typeof v === 'number' && isFinite(v)) ? v : (typeof v === 'string' ? cstr(v) : undefined)),
+    fov: byAddr(p.fov, v => typeof v === 'string' ? cstr(v) : undefined),
+    add: byAddr(p.add, v => cell(v) || undefined), del:{}
+  };
+  if(isObj(p.del)) for(const sh of SH){ if(!isObj(p.del[sh])) continue; w.del[sh] = {}; for(const r of Object.keys(p.del[sh])) if(/^\d{1,6}$/.test(r)) w.del[sh][r] = 1; }
+  if(isObj(p.info)) for(const k of ['name','org','period','date']) if(typeof p.info[k] === 'string') w.info[k] = p.info[k].slice(0, 200);
+  if(isObj(p.wb) && isObj(p.wb.cells)){
+    w.wb = {cells:cellsOf(p.wb.cells), meta:metaOf(p.wb.meta)};
+    for(const sh of SH.slice(0, 6)) if(!w.wb.cells[sh]) w.wb.cells[sh] = {};           /* 빠진 시트는 빈 시트로 */
+    for(const sh of Object.keys(w.wb.cells)) if(!w.wb.meta[sh]) w.wb.meta[sh] = {maxR:0, maxC:0, cols:[], merges:[]};
+  }
+  if(typeof p.tk === 'string' && p.tk.length < 20*1024*1024) w.tk = p.tk;
+  return w;
+}
+async function saveWorkFile(){
+  const pw = await askNewPassword('작업 파일로 저장 (암호)');
+  if(pw === null) return;
+  try{
+    try{ const f = document.getElementById('qtyFrame'); if(f && f.contentWindow) f.contentWindow.postMessage({app:'EDUCOST-SAVE'}, '/'); }catch(e){}
+    await new Promise(r=>setTimeout(r, 200));
+    let wb = null, tk = null;
+    if(WBREPLACED) wb = {cells:WB.cells, meta:WB.meta};
+    else{
+      let old = null; try{ old = JSON.parse(localStorage.getItem(LSKEY)||'null'); }catch(e){}
+      if(old && old.wb) wb = old.wb;
+      else if(old && old.wbIdb){ try{ wb = await idbGet('meta','tempWb'); }catch(e){} }
+    }
+    try{ tk = localStorage.getItem('educost-takeoff-standalone-v1'); }catch(e){}
+    toast('암호화하는 중…');
+    const pay = {app:'EDUCOST-대시보드작업', v:2, ts:Date.now(), info:INFO, ov:OV, fov:FOV, del:DEL, add:ADD, wb, tk};
+    const pack = await encryptEducost(pay, pw);
+    const d = new Date(), p2 = n => String(n).padStart(2,'0');
+    const fname = (INFO.name||'설계내역서').replace(/[\\/:*?"<>|]/g,'_') + '_작업_' + d.getFullYear() + p2(d.getMonth()+1) + p2(d.getDate()) + '_' + p2(d.getHours()) + p2(d.getMinutes()) + '.educost';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(pack)], {type:'application/octet-stream'}));
+    a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+    toast('작업 파일(암호)로 저장했습니다 — ' + fname);
+  }catch(err){ uiAlert('저장하지 못했습니다.\n' + (err && err.message || err)); }
 }
 /* 들어온 내역 값 검증 — 숫자 칸은 숫자만(아니면 0), 글자는 길이 제한 */
 function cleanSimple(p){
@@ -5629,29 +5753,38 @@ document.getElementById('chgTable').addEventListener('click', async e=>{
   if(!document.getElementById('pane-sheet').hidden) renderSheet();
   toast(label+'을 되돌렸습니다.');
 });
-document.getElementById('btnWorkSave').onclick = ()=>{
-  const pay = {app:'EDUCOST-대시보드작업', v:1, ts:Date.now(), info:INFO, ov:OV, fov:FOV, del:DEL, add:ADD,
-               wb: WBREPLACED ? {cells:WB.cells, meta:WB.meta} : null};
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(pay)], {type:'application/json'}));
-  a.download = (INFO.name||'설계내역서').replace(/[\\/:*?"<>|]/g,'_')+'_작업.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-  toast('작업 파일로 저장했습니다.');
-};
+document.getElementById('btnWorkSave').onclick = saveWorkFile;
 document.getElementById('btnWorkLoad').onclick = ()=> document.getElementById('workFile').click();
 document.getElementById('workFile').addEventListener('change', async e=>{
-  const f = e.target.files[0]; if(!f) return;
+  const f = e.target.files[0]; e.target.value = ''; if(!f) return;
   try{
-    const p = JSON.parse(await f.text());
-    if(p.app!=='EDUCOST-대시보드작업') throw new Error('대시보드 작업 파일이 아닙니다.');
-    if(!(await uiConfirm('이 작업 파일로 바꿉니다. 지금 화면의 내용은 사라집니다.'))) return;
-    const stored = {ov:p.ov||{}, fov:p.fov||{}, del:p.del||{}, add:p.add||{}, info:p.info||INFO};
-    if(p.wb && p.wb.cells) stored.wb = p.wb;
-    lsPut(stored); await WB_IDB_P;
+    if(f.size > 60*1024*1024) throw new Error('파일이 너무 큽니다.');
+    let p;
+    if(/\.educost$/i.test(f.name)){
+      const pack = JSON.parse(await f.text());
+      const pw = await askPassword('작업 파일 열기 — ' + f.name);
+      if(pw === null) return;
+      toast('암호를 푸는 중…');
+      p = await decryptEducost(pack, pw);
+    } else p = JSON.parse(await f.text());
+    if(p && p.app === 'EDUCOST-BRIDGE'){                /* 간단내역서에서 내보낸 파일도 여기서 엽니다 */
+      if(!Array.isArray(p.rows) || !p.rows.length) throw new Error('항목이 없는 파일입니다.');
+      if(!(await uiConfirm('간단내역서 파일의 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.\n지금 화면의 내용은 사라집니다.'))) return;
+      applySimple(p); goSheetsTab(); return;
+    }
+    if(!p || p.app !== 'EDUCOST-대시보드작업') throw new Error('대시보드 작업 파일이 아닙니다.');
+    if(!storageOK()){ uiAlert('이 화면에서는 브라우저 저장공간을 쓸 수 없어 임시저장·불러오기가 되지 않습니다.\n(Claude 미리보기 등 제한된 화면)\n\n파일을 내려받아 크롬·엣지에서 열거나 게시 주소에서 쓰십시오.'); return; }
+    const w = cleanWork(p);
+    const nm = w.info.name || f.name;
+    if(!(await uiConfirm('「' + nm + '」 작업 파일로 바꿉니다.\n지금 화면의 내용은 사라집니다.'))) return;
+    const stored = {ov:w.ov, fov:w.fov, del:w.del, add:w.add, info:Object.assign({}, INFO, w.info)};
+    if(w.wb) stored.wb = w.wb;
+    SAVE_ERR = null; lsPut(stored); await WB_IDB_P;
     if(SAVE_ERR) throw SAVE_ERR;
+    if(typeof w.tk === 'string'){ try{ localStorage.setItem('educost-takeoff-standalone-v1', w.tk); }catch(e){} }
+    try{ sessionStorage.setItem('EDUCOST-불러오기후-내역서','1'); }catch(e){}
     location.reload();
-  }catch(err){ toast('읽지 못했습니다: '+err.message); }
+  }catch(err){ uiAlert('불러오지 못했습니다.\n' + (err && err.message || err)); }
 });
 /* 엑셀(xlsx) 내보내기 — 저장만 하는 zip 으로 직접 생성 */
 function crc32(buf){
@@ -6036,13 +6169,7 @@ document.getElementById('btnXlsx').onclick = ()=>{
     + ' ' + names.length + '시트' + (qXml ? ' — 물량산출서 포함' : ''));
 };
 document.getElementById('btnInfoSave').onclick = ()=> document.getElementById('btnWorkSave').click();
-document.getElementById('btnInfoLoad').onclick = async ()=>{
-  if(!storageOK()){ uiAlert('이 화면에서는 브라우저 저장공간을 쓸 수 없어 임시저장·불러오기가 되지 않습니다.\n(Claude 미리보기 등 제한된 화면)\n\n파일을 내려받아 크롬·엣지에서 열거나 게시 주소에서 쓰십시오.'); return; }
-  if(!(await uiConfirm('임시저장해 둔 상태로 되돌립니다.\n지금 화면의 수정 내용은 사라집니다. 진행합니까.'))) return;
-  await WB_IDB_P;
-  try{ sessionStorage.setItem('EDUCOST-불러오기후-내역서','1'); }catch(e){}   /* 다시 열리면 내역서 탭으로 */
-  location.reload();
-};
+document.getElementById('btnInfoLoad').onclick = ()=> document.getElementById('workFile').click();
 document.getElementById('btnInfoTemp').onclick = async ()=>{
   if(!storageOK()){ uiAlert('이 화면에서는 브라우저 저장공간을 쓸 수 없어 임시저장·불러오기가 되지 않습니다.\n(Claude 미리보기 등 제한된 화면)\n\n파일을 내려받아 크롬·엣지에서 열거나 게시 주소에서 쓰십시오.'); return; }
   save();
