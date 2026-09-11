@@ -738,9 +738,8 @@ body.sbon.sbmin #aiBack{right:276px}
       <div class="ph"><b>1 · 내역서 불러오기</b><span>모음에서 고르거나, 설계내역서 엑셀(.xlsx)을 직접 엽니다</span></div>
       <div class="prow">
         <button class="mini primaryish" id="btnGoLib">내역서 모음에서 고르기</button>
-        <input type="file" id="impFile" accept=".xlsx,.json" hidden>
+        <input type="file" id="impFile" accept=".xlsx,.educost,.json" hidden>
         <button class="mini" id="btnImpPick">엑셀 파일 열기</button>
-        <button class="mini" id="btnFromSimple">간단내역서에서 가져오기</button>
         <span id="impInfo" style="font-size:12px; color:var(--sub)"></span>
         <button class="mini" id="btnImpClear" style="margin-left:auto">가져온 항목 비우기</button>
       </div>
@@ -4781,6 +4780,21 @@ document.getElementById('impMode').addEventListener('change', ()=>{ if(IMP) rend
 document.getElementById('impFile').addEventListener('change', async e=>{
   const f = e.target.files[0]; if(!f) return;
   document.getElementById('impInfo').textContent = '읽는 중…';
+  if(/\.educost$/i.test(f.name)){
+    e.target.value = '';
+    try{
+      if(f.size > 20*1024*1024) throw new Error('파일이 너무 큽니다.');
+      const pack = JSON.parse(await f.text());
+      const pw = await askPassword('암호 파일 열기 — ' + f.name);
+      if(pw === null){ document.getElementById('impInfo').textContent = '열기를 취소했습니다.'; return; }
+      document.getElementById('impInfo').textContent = '암호를 푸는 중…';
+      const p = await decryptEducost(pack, pw);
+      if(!p || p.app!=='EDUCOST-BRIDGE' || !Array.isArray(p.rows) || !p.rows.length) throw new Error('간단내역서에서 내보낸 파일이 아닙니다.');
+      document.getElementById('impInfo').textContent = f.name + ' — 항목 ' + p.rows.length + '개 (암호 확인됨)';
+      if(confirm('이 파일의 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.\n지금 화면의 내용은 사라집니다.')){ applySimple(p); goSheetsTab(); }
+    }catch(err){ document.getElementById('impInfo').textContent = '읽지 못했습니다: ' + err.message; }
+    return;
+  }
   if(/\.json$/i.test(f.name)){
     try{
       const p = JSON.parse(await f.text());
@@ -5243,6 +5257,17 @@ function goSheetsTab(){
     if(b) b.click();
   }
 }
+/* 임시저장 불러오기 뒤에는 인트로를 건너뛰고 내역서 탭을 엽니다 */
+(function(){
+  let on = false;
+  try{ on = sessionStorage.getItem('EDUCOST-불러오기후-내역서') === '1'; sessionStorage.removeItem('EDUCOST-불러오기후-내역서'); }catch(e){}
+  if(!on) return;
+  const go = ()=>{
+    const it = document.getElementById('intro'); if(it) it.classList.add('off');
+    goSheetsTab();
+  };
+  window.addEventListener('load', ()=>{ go(); setTimeout(go, 150); setTimeout(go, 600); });
+})();
 document.getElementById('btnInfoSend') && (document.getElementById('btnInfoSend').onclick = ()=>{
   ['inpName:name','inpOrg:org','selPeriod:period','inpDate:date'].forEach(p=>{
     const [id,k] = p.split(':'); const el = document.getElementById(id);
@@ -5432,7 +5457,51 @@ function buildFromSimple(p){
   meta['일위대가'].maxR = 2;
   return {cells, meta};
 }
+/* ---------- 암호 파일(.educost) — 간단내역서에서 암호를 걸어 내보낸 파일을 이 PC 안에서만 풉니다 ---------- */
+/* 형식: {app:'EDUCOST-SECURE', v:1, kdf:'PBKDF2-SHA256', iter, salt, iv, ct}  ·  AES-256-GCM, 브라우저 내장 Web Crypto만 사용 */
+function askPassword(title){
+  return new Promise(res=>{
+    const bk = document.createElement('div');
+    bk.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999;display:flex;align-items:center;justify-content:center';
+    bk.innerHTML = '<div style="background:var(--paper,#fff);border:1px solid var(--line,#ccc);border-radius:10px;padding:18px 20px;width:340px;box-shadow:0 8px 30px rgba(0,0,0,.2)">'
+      + '<b style="font-size:14px"></b><div style="font-size:12px;color:var(--sub,#666);margin:6px 0 10px">내보낼 때 정한 암호를 넣으십시오. 암호는 이 PC 안에서만 쓰이고 저장되지 않습니다.</div>'
+      + '<input type="password" autocomplete="off" style="width:100%;box-sizing:border-box;padding:8px;font-size:14px;border:1px solid var(--line,#ccc);border-radius:6px">'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="mini" data-x>취소</button><button class="mini primaryish" data-ok>열기</button></div></div>';
+    bk.querySelector('b').textContent = title;
+    const inp = bk.querySelector('input');
+    const done = v => { bk.remove(); res(v); };
+    bk.querySelector('[data-x]').onclick = ()=> done(null);
+    bk.querySelector('[data-ok]').onclick = ()=> done(inp.value);
+    inp.addEventListener('keydown', e=>{ if(e.key==='Enter') done(inp.value); if(e.key==='Escape') done(null); });
+    document.body.appendChild(bk); setTimeout(()=>inp.focus(), 30);
+  });
+}
+const secB64 = s => Uint8Array.from(atob(String(s||'')), c=>c.charCodeAt(0));
+async function decryptEducost(pack, pw){
+  if(!pack || pack.app !== 'EDUCOST-SECURE' || pack.v !== 1 || pack.kdf !== 'PBKDF2-SHA256') throw new Error('암호 파일 형식이 아닙니다.');
+  if(!(window.crypto && crypto.subtle)) throw new Error('이 브라우저는 암호 풀기를 지원하지 않습니다. 크롬·엣지 최신판을 쓰십시오.');
+  const iter = +pack.iter;
+  if(!(iter >= 100000 && iter <= 5000000)) throw new Error('암호 파일 설정값이 올바르지 않습니다.');
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({name:'PBKDF2', salt:secB64(pack.salt), iterations:iter, hash:'SHA-256'},
+                                            base, {name:'AES-GCM', length:256}, false, ['decrypt']);
+  let pt;
+  try{ pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:secB64(pack.iv)}, key, secB64(pack.ct)); }
+  catch(e){ throw new Error('암호가 맞지 않거나 파일이 손상되었습니다.'); }
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+/* 들어온 내역 값 검증 — 숫자 칸은 숫자만(아니면 0), 글자는 길이 제한 */
+function cleanSimple(p){
+  const num = v => { const n = Number(v); return isFinite(n) ? n : 0; };
+  const str = (v, n) => String(v==null ? '' : v).slice(0, n||200);
+  const rows = (Array.isArray(p && p.rows) ? p.rows : []).slice(0, 5000).map(r=>({
+    gong:str(r && r.gong), n:str(r && r.n), s:str(r && r.s), u:str(r && r.u, 20),
+    q:num(r && r.q), m:num(r && r.m), l:num(r && r.l), e:num(r && r.e)
+  }));
+  return {app:p && p.app, name:str(p && p.name), period:str(p && p.period, 10), ts:num(p && p.ts) || Date.now(), rows};
+}
 function applySimple(p){
+  p = cleanSimple(p);
   const built = buildFromSimple(p);
   WB.cells = built.cells; WB.meta = built.meta; fixSheetRefs(WB);
   OV = {}; FOV = {}; DEL = {}; SEL = {}; SELG = {}; ADD = {}; _grp = null; WBREPLACED = true;
@@ -5444,17 +5513,6 @@ function applySimple(p){
   recalc();
   toast('간단내역서 '+p.rows.length+'개 항목을 6시트로 옮겼습니다. 총공사비 '+Math.round(FNS.N(C('원가계산서','E31'))).toLocaleString('ko-KR')+'원');
 }
-document.getElementById('btnFromSimple') && (document.getElementById('btnFromSimple').onclick = ()=>{
-  let p = null;
-  try{ p = JSON.parse(localStorage.getItem(BRIDGE_KEY)||'null'); }catch(e){}
-  if(!p || p.app!=='EDUCOST-BRIDGE' || !p.rows || !p.rows.length){
-    document.getElementById('simpleInfo').textContent = '보내진 내역이 없습니다. 간단내역서에서 「설계내역서 대시보드로 보내기」를 먼저 누르십시오.';
-    return;
-  }
-  if(!confirm('간단내역서에서 보낸 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.\n지금 화면의 내용은 사라집니다.')) return;
-  document.getElementById('simpleInfo').textContent = new Date(p.ts).toLocaleString('ko-KR',{hour12:false}) + ' 전송분 · ' + p.rows.length + '개 항목';
-  applySimple(p);
-});
 let SIMPLE_TS = 0;
 /* 간단내역서 탭 안에서 열렸을 때 — 부모 화면이 보내오면 바로 반영 */
 window.addEventListener('message', e=>{
@@ -5917,6 +5975,7 @@ document.getElementById('btnXlsx').onclick = ()=>{
 document.getElementById('btnInfoSave').onclick = ()=> document.getElementById('btnWorkSave').click();
 document.getElementById('btnInfoLoad').onclick = ()=>{
   if(!confirm('임시저장해 둔 상태로 되돌립니다.\n지금 화면의 수정 내용은 사라집니다. 진행합니까.')) return;
+  try{ sessionStorage.setItem('EDUCOST-불러오기후-내역서','1'); }catch(e){}   /* 다시 열리면 내역서 탭으로 */
   location.reload();
 };
 document.getElementById('btnInfoTemp').onclick = ()=>{
