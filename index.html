@@ -991,7 +991,7 @@ body.sbon.sbmin #aiBack{right:276px}
         <input id="ilwiQty" value="1" style="width:64px; text-align:right; font:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--line); background:var(--paper)">
       </label>
       <button class="mini primaryish" id="btnIlwiAdd">내역서에 담기</button>
-      <button class="mini primaryish" id="btnIlwiPrice" hidden="">선택 행 단가에 적용</button>
+      <button class="mini primaryish" id="btnIlwiPrice">선택 행에 적용</button>
       <span id="ilwiFoot" style="font-size:11.5px; color:var(--sub); flex:1 1 100%"></span>
     </div>
   </div>
@@ -6500,7 +6500,7 @@ function ilwiStdSync(){
     if(lab) lab.style.display = std ? 'none' : '';
   });
   const a = document.getElementById('btnIlwiAdd'), p = document.getElementById('btnIlwiPrice');
-  if(a) a.hidden = !!std; if(p) p.hidden = !std;
+  if(a) a.hidden = !!std; if(p) p.hidden = false;
   if(std) ilwiStdLoad(std);
 }
 function renderIlwiStd(f){
@@ -6642,7 +6642,40 @@ document.getElementById('ilwiSrc').addEventListener('change', ()=>{
   ILWISEL = null; ILWISTD_SEL = null; ilwiStdSync(); renderIlwiSide();
 });
 document.getElementById('btnIlwiPrice').onclick = ()=>{
-  const f = ilwiStdField(); if(!f) return;
+  const f = ilwiStdField();
+  if(!f){                                  /* 이 내역서의 호표 → 선택 행에 품명·규격·단위·단가·금액·합계 (수량은 그대로) */
+    if(ILWISEL === null) return toast('적용할 호표를 목록에서 고르십시오.');
+    const b = ilwiBlocks()[ILWISEL];
+    if(!b) return toast('호표를 찾지 못했습니다.');
+    const lr = ilwiListRow(b.label);
+    if(!lr) return toast('이 호표의 일위대가목록 행을 찾지 못했습니다.');
+    if(curSheet !== '공종별내역서') return toast('공종별내역서에서 행을 고른 뒤 적용하십시오.');
+    const rows = selRows();
+    if(!rows.length) return toast('공종별내역서에서 행을 먼저 선택하십시오.');
+    FOV['공종별내역서'] = FOV['공종별내역서'] || {};
+    OV['공종별내역서'] = OV['공종별내역서'] || {};
+    const hasF = (cn, rr)=> !!((baseCell('공종별내역서', cn+rr)||{}).f);
+    rows.forEach(rr=>{
+      OV['공종별내역서']['A'+rr] = rawv('일위대가목록','B'+lr) || '';
+      OV['공종별내역서']['B'+rr] = rawv('일위대가목록','C'+lr) || '';
+      OV['공종별내역서']['C'+rr] = rawv('일위대가목록','D'+lr) || '';
+      if(rawv('공종별내역서','D'+rr) === undefined || rawv('공종별내역서','D'+rr) === '') OV['공종별내역서']['D'+rr] = 1;
+      FOV['공종별내역서']['E'+rr] = 'TRUNC(일위대가목록!E'+lr+',0)';
+      FOV['공종별내역서']['G'+rr] = 'TRUNC(일위대가목록!F'+lr+',0)';
+      FOV['공종별내역서']['I'+rr] = 'TRUNC(일위대가목록!G'+lr+',0)';
+      ['E','G','I'].forEach(cn=> delete OV['공종별내역서'][cn+rr]);
+      if(!hasF('F',rr)) FOV['공종별내역서']['F'+rr] = 'TRUNC(E'+rr+'*D'+rr+', 0)';
+      if(!hasF('H',rr)) FOV['공종별내역서']['H'+rr] = 'TRUNC(G'+rr+'*D'+rr+', 0)';
+      if(!hasF('J',rr)) FOV['공종별내역서']['J'+rr] = 'TRUNC(I'+rr+'*D'+rr+', 0)';
+      if(!hasF('K',rr)) FOV['공종별내역서']['K'+rr] = 'TRUNC(E'+rr+'+G'+rr+'+I'+rr+', 0)';
+      if(!hasF('L',rr)) FOV['공종별내역서']['L'+rr] = 'TRUNC(F'+rr+'+H'+rr+'+J'+rr+', 0)';
+      ['F','H','J','K','L'].forEach(cn=> delete OV['공종별내역서'][cn+rr]);
+      OV['공종별내역서']['N'+rr] = rawv('일위대가목록','A'+lr) || '';
+      OV['공종별내역서']['R'+rr] = 'T'; OV['공종별내역서']['T'+rr] = 'F';
+    });
+    save(); renderWage(); renderRates(); renderSheet();
+    return toast(rows.length + '개 행에 「' + b.label + '」 을 넣었습니다 — 품명·규격·단위·단가·금액·합계까지, 수량은 그대로 둡니다.');
+  }
   const db = ILWISTD[f];
   const r = (db && ILWISTD_SEL !== null) ? db.rows[ILWISTD_SEL] : null;
   if(!r) return toast('적용할 호표를 목록에서 고르십시오.');
