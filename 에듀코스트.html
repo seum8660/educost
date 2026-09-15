@@ -2149,7 +2149,16 @@ function applyNet(uid, silent){
   if(net<0){ if(!silent) toast('공제가 산출보다 커서 수량을 0으로 반영합니다. 산출식을 확인하십시오.'); net=0; }
   r.q = net;
   renderBoq(); renderCost();
-  if(!silent) toast((rowIdxByUid(uid)+1)+'번 행 「'+r.n+'」 수량에 순액 '+fmt2(net)+'을(를) 반영하였습니다.'+(cnt>1?' (연결 산출 '+cnt+'건 합산)':''));
+  qtyPushToParent();
+  if(!silent) toast((rowIdxByUid(uid)+1)+'번 행 「'+r.n+'」 수량에 순액 '+fmt2(net)+'을(를) 반영하였습니다.'+(cnt>1?' (연결 산출 '+cnt+'건 합산)':'')+' 내역서 수량에도 넣었습니다.');
+}
+/* 산출한 수량을 바깥 내역서(공종별내역서 D열)로 보냄 — 내역서 행에서 온 항목(key)만 */
+function qtyPushToParent(){
+  try{
+    if(window.parent === window) return;
+    const rows = state.rows.filter(r=>r.key && r.src==='boq').map(r=>({key:r.key, q:r.q}));
+    window.parent.postMessage({app:'EDUCOST-QTY-APPLY', rows:rows}, '*');
+  }catch(e){}
 }
 function fmt2(n){ return n.toLocaleString('ko-KR',{maximumFractionDigits:3}); }
 $('#btnQtyAdd').onclick = ()=>{ state.takeoff.push({name:'', formula:'', qty:0, unit:'M2', targets:[], sign:'p'}); renderTakeoff(); };
@@ -7044,6 +7053,26 @@ function pushQtyItems(){
   f.contentWindow.postMessage({app:'EDUCOST-BOQ-ITEMS', rows:boqItemsForQty(), name:INFO.name, date:INFO.date}, '*');
 }
 document.getElementById('qtyFrame').addEventListener('load', ()=>{ slimQty(); pushQtyItems(); });
+/* 물량산출에서 반영한 수량 → 공종별내역서 D열 → 집계표·원가계산서까지 */
+window.addEventListener('message', ev=>{
+  const d = ev.data;
+  if(!d || d.app !== 'EDUCOST-QTY-APPLY' || !Array.isArray(d.rows)) return;
+  OV['공종별내역서'] = OV['공종별내역서'] || {};
+  let n = 0;
+  d.rows.forEach(x=>{
+    const m = String(x.key||'').match(/^r(\d+)$/); if(!m) return;
+    const r = +m[1]; if(!isBoqItem(r)) return;
+    const q = Number(x.q);
+    if(!isFinite(q)) return;
+    const cur = C('공종별내역서','D'+r);
+    if(Number(cur) === q) return;
+    OV['공종별내역서']['D'+r] = q; n++;
+  });
+  if(!n) return;
+  save();
+  if(!document.getElementById('pane-sheet').hidden) renderSheet();
+  try{ syncInfoNow(); }catch(e){}
+});
 /* 안쪽 대시보드의 자체 머리글은 감춘다 — 머리글이 두 번 겹치지 않게 */
 function slimQty(){
   const f = document.getElementById('qtyFrame'); if(!f) return;
