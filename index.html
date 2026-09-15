@@ -4608,6 +4608,26 @@ function boqBlocks(){
   }
   return out.filter(b=>b.end);
 }
+/* 체크한 행에 항목을 써 넣습니다 — 빈 행이든 기존 행이든. ref: 일위대가목록 행번호(호표) 또는 {std:[품명,규격,단위,재,노,경]} */
+function fillBoqRow(r, ref, name, spec, unit, qty){
+  const blk = boqBlocks().find(b=> r > b.start && r < b.end); if(!blk) return false;
+  const S = (cn, v, f) => put('공종별내역서', cn+r, {f:f, v:v, s:(cn==='A'||cn==='B')?15:14});
+  ['A','B','C','D','E','F','G','H','I','J','K','L','N','R','T'].forEach(cn=>{ if(OV['공종별내역서']) delete OV['공종별내역서'][cn+r]; if(FOV['공종별내역서']) delete FOV['공종별내역서'][cn+r]; });
+  S('A', name); S('B', spec||''); S('C', unit||''); S('D', qty);
+  if(typeof ref === 'number'){
+    S('E', 0, 'TRUNC(일위대가목록!E'+ref+',0)'); S('G', 0, 'TRUNC(일위대가목록!F'+ref+',0)'); S('I', 0, 'TRUNC(일위대가목록!G'+ref+',0)');
+    put('공종별내역서','N'+r, {v: rawv('일위대가목록','A'+ref) || '', s:1});
+  } else {
+    S('E', Number(ref.std[3])||0); S('G', Number(ref.std[4])||0); S('I', Number(ref.std[5])||0);
+    put('공종별내역서','N'+r, {v:'STD', s:1});
+  }
+  S('F', 0, 'TRUNC(E'+r+'*D'+r+', 0)'); S('H', 0, 'TRUNC(G'+r+'*D'+r+', 0)'); S('J', 0, 'TRUNC(I'+r+'*D'+r+', 0)');
+  S('K', 0, 'TRUNC(E'+r+'+G'+r+'+I'+r+', 0)'); S('L', 0, 'TRUNC(F'+r+'+H'+r+'+J'+r+', 0)');
+  put('공종별내역서','Q'+r, {v: blk.code, s:1}); put('공종별내역서','R'+r, {v:'T', s:1}); put('공종별내역서','S'+r, {v:'F', s:1}); put('공종별내역서','T'+r, {v:'F', s:1}); put('공종별내역서','X'+r, {v:1, s:1});
+  return true;
+}
+/* 체크한 행 — 항목 행뿐 아니라 공종 안의 빈 행도 포함 */
+function selRowsAny(){ return Object.keys(SEL).filter(r=>SEL[r]).map(Number).filter(r=> isBoqItem(r) || isBoqRow(r)); }
 let IMPKEEP = new Set(), IMPCAP = false, IMPNAME = '';
 function addBoqItem(block, ref, name, spec, unit, qty){
   let r = null;
@@ -5991,7 +6011,7 @@ function sheetXml(sh, withFormula){
   }
   if(firstVal && hdRow && firstVal <= hdRow) firstVal = hdRow + 1;
   for(let r=1;r<=meta.maxR;r++){
-    if(isDeleted(sh, r)) continue;
+    if(isDeleted(sh, r)){ rows[r] = '<row r="'+r+'" ht="0" customHeight="1" hidden="1"/>'; continue; }   /* 지운 행은 빈 줄로 남기지 않고 숨김 */
     const kind = rowKind(sh, r);
     const cs = [];
     let hasVal = (kind !== 'title' && kind !== 'sub')
@@ -6024,7 +6044,14 @@ function sheetXml(sh, withFormula){
         : '<c r="'+addr+'" s="'+s+'" t="inlineStr"><is><t>'+xe(v)+'</t></is></c>');
     }
     const ht = (ST.orig && meta.rowHt && meta.rowHt[r]) ? meta.rowHt[r] : ROW_HT(sh, kind);
-    if(cs.length) rows[r] = '<row r="'+r+'" ht="'+ht+'" customHeight="1">'+cs.join('')+'</row>';
+    /* 표 안쪽의 빈 항목 행(값이 하나도 없는 줄)도 숨겨 빈 셀이 이어지지 않게 합니다 */
+    let emptyRow = kind === '' && !cs.some(x=> /<v>|<is>/.test(x));
+    if(sh === '공종별집계표' && kind === 'grp' && r > hdRow){                         /* 항목이 모두 지워져 합계 0인 공종은 내보내지 않음 */
+      const z = ['F','H','J','L'].every(cn=> !Number(C(sh, cn+r)));
+      if(z) emptyRow = true;
+    }
+    if(emptyRow && r > hdRow) rows[r] = '<row r="'+r+'" ht="0" customHeight="1" hidden="1"/>';
+    else if(cs.length) rows[r] = '<row r="'+r+'" ht="'+ht+'" customHeight="1">'+cs.join('')+'</row>';
   }
   const cols = (meta.cols||[]).map(c=>'<col min="'+c.min+'" max="'+c.max+'" width="'+(c.w||8.43)+'" customWidth="1"'+(c.hidden?' hidden="1"':'')+'/>').join('');
   let merges = (meta.merges||[]).slice();
@@ -6650,62 +6677,29 @@ document.getElementById('btnIlwiPrice').onclick = ()=>{
     const lr = ilwiListRow(b.label);
     if(!lr) return toast('이 호표의 일위대가목록 행을 찾지 못했습니다.');
     if(curSheet !== '공종별내역서') return toast('공종별내역서에서 행을 고른 뒤 적용하십시오.');
-    const rows = selRows();
-    if(!rows.length) return toast('공종별내역서에서 행을 먼저 선택하십시오.');
-    FOV['공종별내역서'] = FOV['공종별내역서'] || {};
-    OV['공종별내역서'] = OV['공종별내역서'] || {};
-    const hasF = (cn, rr)=> !!((baseCell('공종별내역서', cn+rr)||{}).f);
+    const rows = selRowsAny();
+    if(!rows.length) return toast('공종별내역서에서 행을 먼저 체크하십시오.');
+    let ok = 0;
     rows.forEach(rr=>{
-      OV['공종별내역서']['A'+rr] = rawv('일위대가목록','B'+lr) || '';
-      OV['공종별내역서']['B'+rr] = rawv('일위대가목록','C'+lr) || '';
-      OV['공종별내역서']['C'+rr] = rawv('일위대가목록','D'+lr) || '';
-      if(rawv('공종별내역서','D'+rr) === undefined || rawv('공종별내역서','D'+rr) === '') OV['공종별내역서']['D'+rr] = 1;
-      FOV['공종별내역서']['E'+rr] = 'TRUNC(일위대가목록!E'+lr+',0)';
-      FOV['공종별내역서']['G'+rr] = 'TRUNC(일위대가목록!F'+lr+',0)';
-      FOV['공종별내역서']['I'+rr] = 'TRUNC(일위대가목록!G'+lr+',0)';
-      ['E','G','I'].forEach(cn=> delete OV['공종별내역서'][cn+rr]);
-      if(!hasF('F',rr)) FOV['공종별내역서']['F'+rr] = 'TRUNC(E'+rr+'*D'+rr+', 0)';
-      if(!hasF('H',rr)) FOV['공종별내역서']['H'+rr] = 'TRUNC(G'+rr+'*D'+rr+', 0)';
-      if(!hasF('J',rr)) FOV['공종별내역서']['J'+rr] = 'TRUNC(I'+rr+'*D'+rr+', 0)';
-      if(!hasF('K',rr)) FOV['공종별내역서']['K'+rr] = 'TRUNC(E'+rr+'+G'+rr+'+I'+rr+', 0)';
-      if(!hasF('L',rr)) FOV['공종별내역서']['L'+rr] = 'TRUNC(F'+rr+'+H'+rr+'+J'+rr+', 0)';
-      ['F','H','J','K','L'].forEach(cn=> delete OV['공종별내역서'][cn+rr]);
-      OV['공종별내역서']['N'+rr] = rawv('일위대가목록','A'+lr) || '';
-      OV['공종별내역서']['R'+rr] = 'T'; OV['공종별내역서']['T'+rr] = 'F';
+      const q0 = rawv('공종별내역서','D'+rr); const q = (q0 === undefined || q0 === '' || q0 === null) ? 1 : q0;
+      if(fillBoqRow(rr, lr, rawv('일위대가목록','B'+lr)||'', rawv('일위대가목록','C'+lr)||'', rawv('일위대가목록','D'+lr)||'', q)) ok++;
     });
-    save(); renderWage(); renderRates(); renderSheet();
-    return toast(rows.length + '개 행에 「' + b.label + '」 을 넣었습니다 — 품명·규격·단위·단가·금액·합계까지, 수량은 그대로 둡니다.');
+    SEL = {}; save(); renderWage(); renderRates(); renderSheet();
+    return toast(ok + '개 행에 「' + b.label + '」 을 넣었습니다 — 품명·규격·단위·단가·금액·합계까지. 수량은 그대로(빈 행은 1).');
   }
   const db = ILWISTD[f];
   const r = (db && ILWISTD_SEL !== null) ? db.rows[ILWISTD_SEL] : null;
   if(!r) return toast('적용할 호표를 목록에서 고르십시오.');
   if(curSheet !== '공종별내역서') return toast('공종별내역서에서 행을 고른 뒤 적용하십시오.');
-  const rows = selRows();
-  if(!rows.length) return toast('공종별내역서에서 행을 먼저 선택하십시오.');
-  OV['공종별내역서'] = OV['공종별내역서'] || {};
-  FOV['공종별내역서'] = FOV['공종별내역서'] || {};
-  const hasF2 = (cn, rr)=> !!((baseCell('공종별내역서', cn+rr)||{}).f);
+  const rows = selRowsAny();
+  if(!rows.length) return toast('공종별내역서에서 행을 먼저 체크하십시오.');
+  let ok = 0;
   rows.forEach(rr=>{
-    /* 품명·규격·단위 — 표준 일위대가 값. 수량은 그대로(비어 있으면 1) */
-    OV['공종별내역서']['A'+rr] = r[0] || '';
-    OV['공종별내역서']['B'+rr] = r[1] || '';
-    OV['공종별내역서']['C'+rr] = r[2] || '';
-    if(rawv('공종별내역서','D'+rr) === undefined || rawv('공종별내역서','D'+rr) === '') OV['공종별내역서']['D'+rr] = 1;
-    OV['공종별내역서']['E'+rr] = r[3];
-    OV['공종별내역서']['G'+rr] = r[4];
-    OV['공종별내역서']['I'+rr] = r[5];
-    ['E','G','I'].forEach(cn=>{ if(FOV['공종별내역서'][cn+rr]) delete FOV['공종별내역서'][cn+rr]; });
-    if(!hasF2('F',rr)) FOV['공종별내역서']['F'+rr] = 'TRUNC(E'+rr+'*D'+rr+', 0)';
-    if(!hasF2('H',rr)) FOV['공종별내역서']['H'+rr] = 'TRUNC(G'+rr+'*D'+rr+', 0)';
-    if(!hasF2('J',rr)) FOV['공종별내역서']['J'+rr] = 'TRUNC(I'+rr+'*D'+rr+', 0)';
-    if(!hasF2('K',rr)) FOV['공종별내역서']['K'+rr] = 'TRUNC(E'+rr+'+G'+rr+'+I'+rr+', 0)';
-    if(!hasF2('L',rr)) FOV['공종별내역서']['L'+rr] = 'TRUNC(F'+rr+'+H'+rr+'+J'+rr+', 0)';
-    ['F','H','J','K','L'].forEach(cn=> delete OV['공종별내역서'][cn+rr]);
-    OV['공종별내역서']['R'+rr] = 'T'; OV['공종별내역서']['T'+rr] = 'F';
+    const q0 = rawv('공종별내역서','D'+rr); const q = (q0 === undefined || q0 === '' || q0 === null) ? 1 : q0;
+    if(fillBoqRow(rr, {std:r}, r[0]||'', r[1]||'', r[2]||'', q)) ok++;
   });
-  save(); renderWage(); renderRates(); renderSheet();
-  toast(rows.length + '개 행에 「' + r[0] + '」 을 넣었습니다 — 품명·규격·단위·단가·금액·합계까지. 재료비 ' + r[3].toLocaleString('ko-KR')
-    + ' · 노무비 ' + r[4].toLocaleString('ko-KR') + ' · 경비 ' + r[5].toLocaleString('ko-KR') + '원 (표준 단가는 값으로 들어갑니다)');
+  SEL = {}; save(); renderWage(); renderRates(); renderSheet();
+  toast(ok + '개 행에 「' + r[0] + '」 을 넣었습니다 — 재료비 ' + r[3].toLocaleString('ko-KR') + ' · 노무비 ' + r[4].toLocaleString('ko-KR') + ' · 경비 ' + r[5].toLocaleString('ko-KR') + '원. 수량은 그대로(빈 행은 1).');
 };
 document.getElementById('btnIlwiAdd').onclick = ()=>{
   if(ILWISEL === null) return toast('담을 호표를 목록에서 고르십시오.');
