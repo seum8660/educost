@@ -5885,10 +5885,10 @@ const STYLES_XML = '<?xml version="1.0" encoding="UTF-8"?>'
  + '<cellStyles count="1"><cellStyle name="표준" xfId="0" builtinId="0"/></cellStyles>'
  + '</styleSheet>';
 /* 셀에 살아 있는 수식 — 직접 입력(OV)이 있으면 값으로, 없으면 강제 요율(FOV) 또는 원본 수식 */
-/* 내보낼 서식표 — 원본 styles.xml이 있으면 그 뒤에 우리 8개 서식을 덧붙입니다 */
+/* 내보낼 서식표 — 항상 내장 양식(STYLES_XML)으로 나갑니다 */
 let _expSt = null;
 function exportStyles(){
-  const orig = WB.meta && WB.meta.__styles;
+  const orig = null;   /* 불러온 파일의 서식표는 쓰지 않고 항상 내장 양식으로 내보냅니다 (파일마다 서식이 달라 표가 틀어지는 것 방지) */
   if(_expSt && _expSt.src === orig) return _expSt;
   if(!orig){ _expSt = {src:orig, orig:false, base:0, xml:STYLES_XML}; return _expSt; }
   try{
@@ -6683,14 +6683,29 @@ document.getElementById('btnIlwiPrice').onclick = ()=>{
   const rows = selRows();
   if(!rows.length) return toast('공종별내역서에서 행을 먼저 선택하십시오.');
   OV['공종별내역서'] = OV['공종별내역서'] || {};
+  FOV['공종별내역서'] = FOV['공종별내역서'] || {};
+  const hasF2 = (cn, rr)=> !!((baseCell('공종별내역서', cn+rr)||{}).f);
   rows.forEach(rr=>{
+    /* 품명·규격·단위 — 표준 일위대가 값. 수량은 그대로(비어 있으면 1) */
+    OV['공종별내역서']['A'+rr] = r[0] || '';
+    OV['공종별내역서']['B'+rr] = r[1] || '';
+    OV['공종별내역서']['C'+rr] = r[2] || '';
+    if(rawv('공종별내역서','D'+rr) === undefined || rawv('공종별내역서','D'+rr) === '') OV['공종별내역서']['D'+rr] = 1;
     OV['공종별내역서']['E'+rr] = r[3];
     OV['공종별내역서']['G'+rr] = r[4];
     OV['공종별내역서']['I'+rr] = r[5];
+    ['E','G','I'].forEach(cn=>{ if(FOV['공종별내역서'][cn+rr]) delete FOV['공종별내역서'][cn+rr]; });
+    if(!hasF2('F',rr)) FOV['공종별내역서']['F'+rr] = 'TRUNC(E'+rr+'*D'+rr+', 0)';
+    if(!hasF2('H',rr)) FOV['공종별내역서']['H'+rr] = 'TRUNC(G'+rr+'*D'+rr+', 0)';
+    if(!hasF2('J',rr)) FOV['공종별내역서']['J'+rr] = 'TRUNC(I'+rr+'*D'+rr+', 0)';
+    if(!hasF2('K',rr)) FOV['공종별내역서']['K'+rr] = 'TRUNC(E'+rr+'+G'+rr+'+I'+rr+', 0)';
+    if(!hasF2('L',rr)) FOV['공종별내역서']['L'+rr] = 'TRUNC(F'+rr+'+H'+rr+'+J'+rr+', 0)';
+    ['F','H','J','K','L'].forEach(cn=> delete OV['공종별내역서'][cn+rr]);
+    OV['공종별내역서']['R'+rr] = 'T'; OV['공종별내역서']['T'+rr] = 'F';
   });
   save(); renderWage(); renderRates(); renderSheet();
-  toast(rows.length + '개 행에 「' + r[0] + '」 단가를 넣었습니다 — 재료비 ' + r[3].toLocaleString('ko-KR')
-    + ' · 노무비 ' + r[4].toLocaleString('ko-KR') + ' · 경비 ' + r[5].toLocaleString('ko-KR') + '원');
+  toast(rows.length + '개 행에 「' + r[0] + '」 을 넣었습니다 — 품명·규격·단위·단가·금액·합계까지. 재료비 ' + r[3].toLocaleString('ko-KR')
+    + ' · 노무비 ' + r[4].toLocaleString('ko-KR') + ' · 경비 ' + r[5].toLocaleString('ko-KR') + '원 (표준 단가는 값으로 들어갑니다)');
 };
 document.getElementById('btnIlwiAdd').onclick = ()=>{
   if(ILWISEL === null) return toast('담을 호표를 목록에서 고르십시오.');
