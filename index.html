@@ -3977,8 +3977,11 @@ function del(sheet, row){ (DEL[sheet] = DEL[sheet] || {})[row] = 1; }
 function boqRefsHopyo(code){    /* 남아 있는 호표 참조 수 */
   let n = 0;
   const bm = WB.meta['공종별내역서'].maxR, im = WB.meta['일위대가'].maxR;
-  for(let r=1;r<=bm;r++) if(!isDeleted('공종별내역서',r) && rawv('공종별내역서','N'+r)===code && rawv('공종별내역서','R'+r)==='T') n++;
-  for(let r=1;r<=im;r++) if(!isDeleted('일위대가',r) && rawv('일위대가','O'+r)===code && rawv('일위대가','P'+r)==='T') n++;
+  /* 이 코드의 일위대가목록 행 — 수식으로 그 행을 가리키는 항목도 참조로 셉니다 */
+  let lr = null; { const lm = WB.meta['일위대가목록'].maxR; for(let r=4;r<=lm;r++) if(rawv('일위대가목록','A'+r)===code){ lr = r; break; } }
+  const refsList = (sh, r) => { if(lr===null) return false; for(const cn of ['E','G','I','K']){ const c = baseCell(sh, cn+r); const fs = String(((FOV[sh]||{})[cn+r]) || (c && c.f) || ''); if(new RegExp('일위대가목록!\\$?[A-Z]+\\$?'+lr+'(?!\\d)').test(fs)) return true; } return false; };
+  for(let r=1;r<=bm;r++) if(!isDeleted('공종별내역서',r) && ((rawv('공종별내역서','N'+r)===code && rawv('공종별내역서','R'+r)==='T') || refsList('공종별내역서', r))) n++;
+  for(let r=1;r<=im;r++) if(!isDeleted('일위대가',r) && ((rawv('일위대가','O'+r)===code && rawv('일위대가','P'+r)==='T') || refsList('일위대가', r))) n++;
   return n;
 }
 function boqRefsMat(code){      /* 남아 있는 자재·노임 참조 수 */
@@ -3990,9 +3993,19 @@ function boqRefsMat(code){      /* 남아 있는 자재·노임 참조 수 */
 }
 function cascadeDelete(rows){
   const hopyo = new Set(), mats = new Set();
+  /* 항목이 수식으로 직접 가리키는 일위대가목록 행의 코드도 함께 잡습니다 — N열 코드가 비었거나 어긋난 행 대비 */
+  const refCode = r => {
+    for(const cn of ['E','G','I','K']){
+      const c = baseCell('공종별내역서', cn+r); const fo = (FOV['공종별내역서']||{})[cn+r];
+      const fs = String(fo || (c && c.f) || ''); const m = fs.match(/일위대가목록!\$?[A-Z]+\$?(\d+)/);
+      if(m){ const code = rawv('일위대가목록','A'+m[1]); if(code) return code; }
+    }
+    return null;
+  };
   rows.forEach(r=>{
     const code = rawv('공종별내역서','N'+r);
     if(code){ if(rawv('공종별내역서','R'+r)==='T') hopyo.add(code); else mats.add(code); }
+    const rc = refCode(r); if(rc) hopyo.add(rc);
     del('공종별내역서', r);
   });
   const groups = ilwiGroups();
@@ -4241,6 +4254,20 @@ const WAGES = {"periods":["2026 상반기","2026 하반기"],"rows":[
  {nm:'도장공',addr:'P37',w:263017},
  {nm:'화물차운전사',addr:'P38',w:238936},
  {nm:'코킹공',addr:'P39',w:209131}]};
+/* 노임 행은 내역서마다 위치가 다르므로 단가대비표에서 직종 이름으로 찾습니다 (WAGES.rows의 addr은 기본값) */
+const WAGE_STD = WAGES.rows.map(r=>({nm:r.nm, w:r.w}));
+function wageRowsLive(){
+  const d = WB.cells['단가대비표'] || {}, m = (WB.meta['단가대비표']||{}).maxR || 0;
+  const norm = s => String(s||'').replace(/[\s\u00a0()（）]/g,'');
+  const out = [];
+  WAGE_STD.forEach(s=>{
+    const key = norm(s.nm); let hit = null;
+    for(let r=1;r<=m;r++){ if(isDeleted('단가대비표', r)) continue; const b = d['B'+r]; if(b && norm(b.v) === key){ hit = r; break; } }
+    if(hit === null) return;                       /* 이 내역서에 없는 직종은 표에 안 보임 */
+    out.push({nm:s.nm, addr:'P'+hit, w:s.w});
+  });
+  return out;
+}
 let wageIdx = 0;                       /* 0 = 2026 상반기(공표치), 1 = 2026 하반기(직접 입력) */
 function wageStd(row){
   if(wageIdx===0) return row.w;
@@ -4257,7 +4284,9 @@ function renderWage(){
   recalc();
   const half = WAGES.periods[wageIdx];
   let h = '<thead><tr><th>직종</th><th>현재 적용단가</th><th>'+half+' 기준</th><th>차액</th><th>적용할 단가</th></tr></thead><tbody>';
-  WAGES.rows.forEach(row=>{
+  const liveRows = wageRowsLive();
+  if(!liveRows.length) h += '<tr><td colspan="5" style="color:var(--sub)">단가대비표에서 노임 직종 행을 찾지 못했습니다. 품명이 「보통인부」「비계공」처럼 적혀 있어야 합니다.</td></tr>';
+  liveRows.forEach(row=>{
     const cur = FNS.N(C('단가대비표', row.addr));
     const std = wageStd(row);
     const d = std - cur;
@@ -4276,18 +4305,21 @@ function renderWage(){
 document.getElementById('btnWageApply').onclick = ()=>{
   OV['단가대비표'] = OV['단가대비표'] || {};
   if(wageIdx===1) INFO.wageH = INFO.wageH || {};
-  document.querySelectorAll('input[data-wage]').forEach(inp=>{
-    const v = Number(String(inp.value).replace(/,/g,''));
-    if(!isNaN(v) && v>0){
-      OV['단가대비표'][inp.dataset.wage] = v;
-      if(wageIdx===1) INFO.wageH[inp.dataset.wage] = v;
-    }
+  const rows = wageRowsLive();
+  if(!rows.length) return toast('단가대비표에서 노임 직종 행을 찾지 못했습니다.');
+  let n = 0;
+  rows.forEach(row=>{
+    const inp = document.querySelector('input.wi[data-wage="'+row.addr+'"]');
+    const v = inp ? Number(String(inp.value).replace(/[^\d.-]/g,'')) : wageStd(row);
+    if(!isFinite(v)) return;
+    if(wageIdx===1) INFO.wageH[row.addr] = v;
+    OV['단가대비표'][row.addr] = v; n++;
   });
-  save(); renderWage(); if(!document.getElementById('pane-sheet').hidden) renderSheet();
-  toast(WAGES.periods[wageIdx]+' 노임단가를 적용했습니다. 일위대가부터 원가계산서까지 다시 계산되었습니다.');
+  save(); renderWage(); renderRates(); if(!document.getElementById('pane-sheet').hidden) renderSheet();
+  toast(WAGES.periods[wageIdx]+' 노임단가 '+n+'개 직종을 적용했습니다. 일위대가부터 원가계산서까지 다시 계산되었습니다.');
 };
 document.getElementById('btnWageReset').onclick = ()=>{
-  if(OV['단가대비표']) WAGES.rows.forEach(r=>{ delete OV['단가대비표'][r.addr]; });
+  if(OV['단가대비표']) wageRowsLive().forEach(r=>{ delete OV['단가대비표'][r.addr]; });
   save(); renderWage(); if(!document.getElementById('pane-sheet').hidden) renderSheet();
   toast('노임단가를 원본으로 되돌렸습니다.');
 };
