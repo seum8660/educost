@@ -736,7 +736,7 @@ body.sbon.sbmin #aiBack{right:276px}
 <main>
   <section id="pane-info" class="pane">
     <div class="panel2">
-      <div class="ph"><b>1 · 내역서 불러오기</b><span>모음에서 고르거나, 설계내역서 엑셀(.xlsx)을 직접 엽니다</span></div>
+      <div class="ph"><b>1 · 내역서 불러오기</b><span>모음에서 고르거나 설계내역서 엑셀(.xlsx)을 직접 엽니다 → 2단계 공사정보 확인 → 내역서 탭</span></div>
       <div class="prow">
         <button class="mini primaryish" id="btnGoLib">내역서 모음에서 고르기</button>
         <input type="file" id="impFile" accept=".xlsx,.educost,.json" hidden="">
@@ -749,6 +749,12 @@ body.sbon.sbmin #aiBack{right:276px}
         <span id="infoNow" style="font-size:12px; color:var(--sub)"></span>
       </div>
       <div id="impPick" hidden>
+        <div class="prow" id="impSheetRow" style="border-top:1px dashed var(--line2); padding-top:10px; flex-wrap:wrap">
+          <label>가젤올 시트</label>
+          <span id="impSheets" style="display:flex; gap:10px; flex-wrap:wrap; font-size:12.5px"></span>
+          <button class="mini" id="btnImpSheets">선택 시트만 가져오기</button>
+          <span id="impSheetHint" style="font-size:12px; color:var(--sub)">체크한 시트는 이 파일에서, 나머지는 지금 열린 내역서의 내용이 유지됩니다.</span>
+        </div>
         <div class="prow" style="border-top:1px dashed var(--line2); padding-top:10px">
           <label>가져올 단위</label>
           <select id="impMode"><option value="gong" selected="">공종</option><option value="hopyo">세부품명</option></select>
@@ -764,7 +770,7 @@ body.sbon.sbmin #aiBack{right:276px}
       
     </div>
 
-    <div class="panel2" style="margin-top:18px">
+    <div class="panel2" id="infoStep2" style="margin-top:18px; transition:box-shadow .4s">
       <div class="ph"><b>2 · 공사정보 고치기</b><span>공사명·공사기간을 확인한 뒤 내역서 탭으로 넘깁니다</span></div>
       <div class="formgrid" style="box-shadow:none; border:none; padding:0">
         <div class="field" style="grid-column:1/-1">
@@ -4414,7 +4420,7 @@ document.getElementById('btnRateReset').onclick = ()=>{
 };
 /* ---------- 다른 내역서 가져오기 (xlsx 읽기) ---------- */
 const XL_SHEETS = ['원가계산서','공종별집계표','공종별내역서','일위대가목록','일위대가','단가대비표'];
-async function readXlsx(file){
+async function readXlsx(file, assign){
   const buf = new Uint8Array(await file.arrayBuffer());
   const u16 = o => buf[o]|buf[o+1]<<8, u32 = o => (buf[o]|buf[o+1]<<8|buf[o+2]<<16|buf[o+3]<<24)>>>0;
   let eo = -1; for(let i=buf.length-22;i>=0;i--) if(u32(i)===0x06054b50){ eo=i; break; }
@@ -4463,18 +4469,32 @@ async function readXlsx(file){
   const norm = s => String(s).replace(/[\s\u00a0]/g,'');
   const normMap = {};
   for(const k of Object.keys(map)) normMap[norm(k)] = k;          /* 정규화한 이름 → 원래 시트이름 */
+  const used = new Set();                                         /* 이미 표준 시트로 잡은 원본 시트이름 */
   const findName = nm => {
-    if(map[nm]) return nm;
-    const n = norm(nm);
-    if(normMap[n]) return normMap[n];
-    for(const a of (ALIAS[nm]||[])) if(normMap[norm(a)]) return normMap[norm(a)];
-    const keys = Object.keys(normMap);
-    const hit = keys.find(k=>k.indexOf(n) >= 0 || n.indexOf(k) >= 0);
-    return hit ? normMap[hit] : null;
+    let hit = null;
+    if(map[nm]) hit = nm;
+    else {
+      const n = norm(nm);
+      if(normMap[n] && !used.has(normMap[n])) hit = normMap[n];
+      if(!hit) for(const a of (ALIAS[nm]||[])) if(normMap[norm(a)] && !used.has(normMap[norm(a)])){ hit = normMap[norm(a)]; break; }
+      if(!hit){
+        /* 부분 일치 — 다른 표준 시트이름을 포함하는 시트(예: 일위대가를 찾는데 일위대가목록)는 제외, 가장 짧은 이름 우선 */
+        const others = XL_SHEETS.filter(s2=>s2!==nm).map(norm);
+        const keys = Object.keys(normMap).filter(k=>!used.has(normMap[k]) && !others.some(o=>k.indexOf(o)>=0))
+          .filter(k=>k.indexOf(n) >= 0 || n.indexOf(k) >= 0).sort((a,b)=>a.length-b.length);
+        if(keys.length) hit = normMap[keys[0]];
+      }
+    }
+    if(hit) used.add(hit);
+    return hit;
   };
   const rename = {};                                              /* 원래 시트이름 → 표준 이름 */
+  const matched = {};                                             /* 표준 이름 → 원래 시트이름 */
   for(const nm of XL_SHEETS){
-    const orig = findName(nm);
+    let orig;
+    if(assign && Object.prototype.hasOwnProperty.call(assign, nm)){ orig = assign[nm] && map[assign[nm]] ? assign[nm] : null; if(orig) used.add(orig); }
+    else orig = findName(nm);
+    if(orig) matched[nm] = orig;
     const path = orig ? map[orig] : null;
     if(orig && orig !== nm) rename[orig] = nm;
     if(!path){ cells[nm] = {}; meta[nm] = {maxR:0, maxC:0, cols:[], merges:[]}; missing.push(nm); continue; }
@@ -4508,7 +4528,21 @@ async function readXlsx(file){
     }
   }catch(e){}
   if(missing.length === XL_SHEETS.length) throw new Error('설계내역서 시트를 찾지 못했습니다.');
-  if(!map['공종별내역서'] && !map['일위대가목록']) throw new Error('공종별내역서·일위대가목록 시트가 모두 없습니다.');
+  if(!assign && missing.indexOf('공종별내역서') >= 0 && missing.indexOf('일위대가목록') >= 0) throw new Error('공종별내역서·일위대가목록 시트가 모두 없습니다.');
+  /* 표준 6시트 밖의 시트(표지·노임단가·수량산출 등)는 가져오지 않고,
+     그 시트를 바라보는 수식은 엑셀이 계산해 둔 값으로 굳혀 참조가 끊기지 않게 합니다 */
+  const extra = new Set(Object.keys(map).filter(k=>!used.has(k) && XL_SHEETS.indexOf(k) < 0));
+  let frozen = 0;
+  if(extra.size){
+    const extraN = new Set([...extra].map(norm));
+    const refSheet = /'([^']+)'!|([A-Za-z0-9_\uAC00-\uD7A3]+)!/g;
+    for(const sh of Object.keys(cells)) for(const a of Object.keys(cells[sh])){
+      const c = cells[sh][a]; if(!c || !c.f) continue;
+      let hitX = false;
+      for(const mm of String(c.f).matchAll(refSheet)){ const nm2 = String(mm[1]||mm[2]).trim(); if(extra.has(nm2) || extraN.has(norm(nm2))){ hitX = true; break; } }
+      if(hitX){ delete c.f; if(c.v === undefined) c.v = 0; frozen++; }
+    }
+  }
   /* 수식 안의 시트이름도 표준 이름으로 바꿔줍니다 — '집계표 (2)'!F5 같은 참조가 끊기지 않게 */
   const rx = Object.keys(rename);
   if(rx.length){
@@ -4519,7 +4553,7 @@ async function readXlsx(file){
       if(c && c.f) c.f = String(c.f).replace(pat, (mm, q, b) => rename[q || b] + '!');
     }
   }
-  return {cells, meta, missing};
+  return {cells, meta, missing, extra:[...extra], frozen, sheets:Object.keys(map), matched};
 }
 /* 적산 프로그램이 값으로 굳혀 둔 계산 칸을 같은 규칙의 수식으로 되살림 */
 function normalizeWB(wb){
@@ -4905,7 +4939,7 @@ document.getElementById('impFile').addEventListener('change', async e=>{
       const p = await decryptEducost(pack, pw);
       if(!p || p.app!=='EDUCOST-BRIDGE' || !Array.isArray(p.rows) || !p.rows.length) throw new Error('간단내역서에서 내보낸 파일이 아닙니다.');
       document.getElementById('impInfo').textContent = f.name + ' — 항목 ' + p.rows.length + '개 (암호 확인됨)';
-      if((await uiConfirm('이 파일의 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.\n지금 화면의 내용은 사라집니다.'))){ applySimple(p); goSheetsTab(); }
+      if((await uiConfirm('이 파일의 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.\n지금 화면의 내용은 사라집니다.'))){ applySimple(p); goInfoStep2(); }
     }catch(err){ document.getElementById('impInfo').textContent = '읽지 못했습니다: ' + err.message; }
     return;
   }
@@ -4914,16 +4948,19 @@ document.getElementById('impFile').addEventListener('change', async e=>{
       const p = JSON.parse(await f.text());
       if(p.app!=='EDUCOST-BRIDGE' || !p.rows || !p.rows.length) throw new Error('간단내역서 대시보드용 파일이 아닙니다.');
       document.getElementById('impInfo').textContent = f.name + ' — 항목 ' + p.rows.length + '개';
-      if((await uiConfirm('이 파일의 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.'))) applySimple(p);
+      if((await uiConfirm('이 파일의 '+p.rows.length+'개 항목으로 대시보드를 새로 구성합니다.'))){ applySimple(p); goInfoStep2(); }
     }catch(err){ document.getElementById('impInfo').textContent = '읽지 못했습니다: ' + err.message; }
     return;
   }
   try{
     IMP = normalizeWB(await readXlsx(f));
+    IMPFILE = f;
     _srcGrp = null;
     const n = Object.keys(IMP.cells['일위대가목록']).filter(a=>/^B\d+$/.test(a)).length;
-    document.getElementById('impInfo').textContent = f.name + ' — 호표 ' + n + '건';
+    document.getElementById('impInfo').textContent = f.name + ' — 호표 ' + n + '건'
+      + ((IMP.extra && IMP.extra.length) ? ' · 표준 6시트 외 「' + IMP.extra.join(' · ') + '」 시트는 건너뜀' : '');
     renderImpList();
+    renderImpSheets();
     IMPNAME = f.name;
   }catch(err){
     IMP = null; document.getElementById('impPick').hidden = true;
@@ -4992,9 +5029,10 @@ document.getElementById('btnImpOpen').onclick = async ()=>{
   });
   SEL = {}; SELG = {}; _grp = null; save(); renderWage(); renderRates(); renderSheet();
   document.getElementById('colSrc').hidden = true;
-  goSheetsTab();
   IMPKEEP = new Set();
-  toast(keep.size+'행으로 새 내역서를 작성했습니다.'+(emptied? ' 빈 공종 '+emptied+'개 정리':''));
+  document.getElementById('impPick').hidden = true;
+  goInfoStep2();
+  toast(keep.size+'행으로 새 내역서를 작성했습니다.'+(emptied? ' 빈 공종 '+emptied+'개 정리':'')+' · 공사정보를 확인한 뒤 내역서 탭으로 넘기십시오.');
 };
 document.getElementById('btnImpClear') && (document.getElementById('btnImpClear').onclick = async ()=>{
   const n = Object.values(ADD).reduce((s,o)=>s+Object.keys(o).length, 0);
@@ -5439,6 +5477,20 @@ function goInfoTab(){ syncInfoNow();
   const b = [...tabs.children].find(x=>x.dataset.t==='info');
   if(b) b.click();
 }
+/* 1단계(모음·엑셀)에서 내역서를 열면 2단계 공사정보로 이동 — 확인 후 「내역서 탭으로 넘기기」로 진행 */
+function goInfoStep2(){
+  goInfoTab();
+  const p = document.getElementById('infoStep2'), hint = document.getElementById('infoSendHint');
+  if(hint) hint.textContent = '공사명·공사기간을 확인한 뒤 눌러 내역서 탭으로 넘깁니다.';
+  if(!p) return;
+  requestAnimationFrame(()=>{
+    const y = p.getBoundingClientRect().top + window.scrollY - 84;
+    window.scrollTo({top: Math.max(0, y), behavior:'smooth'});
+    p.style.boxShadow = '0 0 0 2px var(--accent, #5980a6)';
+    setTimeout(()=>{ p.style.boxShadow = ''; }, 1800);
+    const n = document.getElementById('inpName'); if(n) n.focus();
+  });
+}
 function openSplit(name, jump){
   document.getElementById('colSrc').hidden = false;
   document.getElementById('srcFile').textContent = name || '';
@@ -5782,6 +5834,65 @@ window.addEventListener('message', async e=>{
   if(el) el.textContent = '간단내역서 탭에서 바로 받은 내역 · ' + p.rows.length + '개 항목';
 });
 document.getElementById('btnImpPick').onclick = ()=> document.getElementById('impFile').click();
+/* 엑셀 파일의 모든 시트를 보여 주고, 가져올 시트와 그 시트가 들어갈 표준 자리를 골라 가져오기 */
+let IMPFILE = null;
+function renderImpSheets(){
+  const el = document.getElementById('impSheets'); if(!el) return;
+  const sheets = (IMP && IMP.sheets) || XL_SHEETS.filter(sh=>IMP && IMP.cells[sh] && Object.keys(IMP.cells[sh]).length);
+  const slotOf = {}; for(const std of Object.keys((IMP && IMP.matched) || {})) slotOf[IMP.matched[std]] = std;
+  const esc2 = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  el.style.flexDirection = 'column'; el.style.alignItems = 'stretch'; el.style.gap = '4px';
+  el.innerHTML = sheets.map((nm,i)=>{
+    const std = slotOf[nm] || '';
+    const opts = '<option value="">→ 자리 선택</option>' + XL_SHEETS.map(s=>'<option value="'+s+'"'+(s===std?' selected':'')+'>→ '+s+'</option>').join('');
+    return '<label style="display:flex; align-items:center; gap:8px"><input type="checkbox" data-impsh="'+i+'"'+(std?' checked':'')+'>'
+      + '<span style="min-width:160px">'+esc2(nm)+(std?'':' <span style="color:var(--sub)">(표준 시트 아님)</span>')+'</span>'
+      + '<select data-impslot="'+i+'" style="font-size:12px">'+opts+'</select></label>';
+  }).join('');
+  el.querySelectorAll('select[data-impslot]').forEach(s=>{ s.onchange = ()=>{ const c = el.querySelector('input[data-impsh="'+s.dataset.impslot+'"]'); if(c && s.value) c.checked = true; }; });
+}
+document.getElementById('btnImpSheets') && (document.getElementById('btnImpSheets').onclick = async ()=>{
+  if(!IMP) return toast('민저 내역서 파일을 고르십시오.');
+  const sheets = IMP.sheets || XL_SHEETS;
+  const assign = {}, usedSlot = {};
+  for(const c of document.querySelectorAll('#impSheets input[data-impsh]:checked')){
+    const nm = sheets[+c.dataset.impsh];
+    const sel = document.querySelector('#impSheets select[data-impslot="'+c.dataset.impsh+'"]');
+    const std = sel ? sel.value : '';
+    if(!std) return toast('「'+nm+'」 시트가 들어갈 자리를 고르십시오.');
+    if(usedSlot[std]) return toast('「'+std+'」 자리에 시트가 둘 이상 걸렸습니다: '+usedSlot[std]+', '+nm);
+    usedSlot[std] = nm; assign[std] = nm;
+  }
+  const pick = Object.keys(assign);
+  if(!pick.length) return toast('가져올 시트를 하나 이상 체크하십시오.');
+  const keep = XL_SHEETS.filter(s=>pick.indexOf(s)<0);
+  const desc = pick.map(s=> assign[s]===s ? s : (assign[s]+' → '+s)).join(' · ');
+  if(!(await uiConfirm('「'+desc+'」를 이 파일에서 가져옵니다.\n'+(keep.length ? '「'+keep.join(' · ')+'」는 지금 열린 내역서 내용이 유지됩니다.\n' : '')+'가져오는 시트의 수정 내용은 사라집니다.'))) return;
+  /* 고른 자리대로 다시 읽습니다 (표준 이름과 다른 시트도 그 자리로) */
+  const same = pick.every(s=> IMP.matched && IMP.matched[s] === assign[s]);
+  let SRC = IMP;
+  if(!same){
+    if(!IMPFILE) return toast('파일을 다시 열어 시도하십시오.');
+    const full = {}; XL_SHEETS.forEach(s=>{ full[s] = assign[s] || null; });
+    try{ SRC = normalizeWB(await readXlsx(IMPFILE, full)); }
+    catch(err){ return toast('읽지 못했습니다: ' + err.message); }
+  }
+  pick.forEach(sh=>{
+    WB.cells[sh] = SRC.cells[sh] || {}; WB.meta[sh] = SRC.meta[sh] || {maxR:0, maxC:0, cols:[], merges:[]};
+    delete OV[sh]; delete FOV[sh]; delete DEL[sh]; delete ADD[sh]; delete SEL[sh]; delete SELG[sh];
+  });
+  fixSheetRefs(WB); fixCostRef(WB);
+  IMPKEEP = new Set(); _grp = null; WBREPLACED = true;
+  if(pick.indexOf('원가계산서') >= 0){
+    const t2 = SRC.cells['원가계산서']['B2'];
+    if(t2 && typeof t2.v === 'string' && t2.v.replace(/^공사명\s*:\s*/,'').trim()){ INFO.name = t2.v.replace(/^공사명\s*:\s*/,''); document.getElementById('inpName').value = INFO.name; }
+  }
+  save(); renderWage(); renderRates(); renderSheet();
+  document.getElementById('colSrc').hidden = true;
+  document.getElementById('impPick').hidden = true;
+  goInfoStep2();
+  toast(pick.length+'개 시트를 가져왔습니다 — '+pick.join(' · ')+'. 공사정보를 확인한 뒤 내역서 탭으로 넘기십시오.');
+});
 /* ---------- 변경 내역 · 작업파일 · 엑셀 내보내기 ---------- */
 function chgCounts(){
   const cnt = o => Object.values(o||{}).reduce((s,x)=>s+Object.keys(x).length, 0);
@@ -6023,8 +6134,11 @@ function sheetXml(sh, withFormula){
   const hf = (SHEET_TITLE[sh] && !subRowFree)
     ? '<headerFooter><oddHeader>&amp;L&amp;"맑은 고딕,Regular"&amp;11[ ' + String(INFO.name||'').replace(/&/g,'&amp;&amp;').replace(/</g,'&lt;') + ' ]</oddHeader></headerFooter>'
     : '';
+  /* 열 너비·숨김은 불러온 파일이 아니라 내장 양식(BASE_META)을 씁니다 — 어떤 내역서를 열어도 같은 형식·한 페이지 폭 */
+  const defCols = ((BASE_META[sh] && BASE_META[sh].cols) || []).map(c=>({min:c.min, max:c.max, w:c.w, hidden:!!c.hidden}));
   const hiddenCol = new Set();               /* 숨긴 열엔 괘선을 칠하지 않습니다 */
-  for(const c of (meta.cols||[])) if(c.hidden) for(let i=c.min; i<=c.max; i++) hiddenCol.add(i);
+  for(const c of defCols) if(c.hidden) for(let i=c.min; i<=c.max; i++) hiddenCol.add(i);
+  for(let i=vis+1; i<=meta.maxC; i++) hiddenCol.add(i);   /* 표 폭 밖의 열(불러온 파일의 계산용 열)은 모두 숨김 */
   /* 표 안쪽(첫 값 행 ~ 마지막 값 행)은 빈 줄도 괘선을 칠합니다 */
   let firstVal = 0, lastVal = 0, hdRow = 0;
   for(let r=1;r<=meta.maxR;r++){
@@ -6085,8 +6199,20 @@ function sheetXml(sh, withFormula){
     if(emptyRow && r > hdRow) rows[r] = '<row r="'+r+'" ht="0" customHeight="1" hidden="1"/>';
     else if(cs.length) rows[r] = '<row r="'+r+'" ht="'+ht+'" customHeight="1">'+cs.join('')+'</row>';
   }
-  const cols = (meta.cols||[]).map(c=>'<col min="'+c.min+'" max="'+c.max+'" width="'+(c.w||8.43)+'" customWidth="1"'+(c.hidden?' hidden="1"':'')+'/>').join('');
-  let merges = (meta.merges||[]).slice();
+  const colDefs = defCols.filter(c=>c.min <= vis);
+  const covered = new Set(); colDefs.forEach(c=>{ for(let i=c.min;i<=c.max;i++) covered.add(i); });
+  for(let i=1;i<=vis;i++) if(!covered.has(i)) colDefs.push({min:i, max:i, w:8.625, hidden:false});
+  if(meta.maxC > vis) colDefs.push({min:vis+1, max:Math.max(meta.maxC, vis+1), w:2, hidden:true});
+  colDefs.sort((a,b)=>a.min-b.min);
+  const cols = colDefs.map(c=>'<col min="'+c.min+'" max="'+c.max+'" width="'+(c.w||8.43)+'" customWidth="1"'+(c.hidden?' hidden="1"':'')+'/>').join('');
+  /* 표 폭 밖으로 나가는 병합은 내리고, 지운 행에 걸린 병합도 내립니다 */
+  const refCols = ref => ref.split(':').map(a=>colIdx(a.replace(/\d+/g,'')));
+  const refRows = ref => ref.split(':').map(a=>+a.replace(/[A-Z]+/g,''));
+  let merges = (meta.merges||[]).filter(m=>{
+    const cc = refCols(m); if(cc.some(c=>c>vis)) return false;
+    const rr = refRows(m); for(let r=rr[0]; r<=(rr[1]||rr[0]); r++) if(isDeleted(sh, r)) return false;
+    return true;
+  });
   /* 제목·공사명 줄을 페이지 폭에 맞춰 다시 구성합니다 (일위대가목록 기준) */
   if(SHEET_TITLE[sh] && sh !== '원가계산서'){
     const last = colName(VISCOL[sh] || meta.maxC);
@@ -6119,7 +6245,7 @@ function sheetXml(sh, withFormula){
     + '<sheetData>'+Object.keys(rows).map(k=>rows[k]).join('')+'</sheetData>'
     + (merges.length? '<mergeCells count="'+merges.length+'">'+merges.map(m=>'<mergeCell ref="'+m+'"/>').join('')+'</mergeCells>' : '')
     + '<pageMargins left="0.7874015748031495" right="0" top="'+(hf ? '0.748031496062992' : '0.3937007874015748')+'" bottom="0.3937007874015748" header="'+(hf ? '0.31496062992126' : '0')+'" footer="0"/>'
-    + '<pageSetup paperSize="9" scale="'+(PRINT_SCALE[sh]||70)+'" fitToHeight="0" orientation="landscape"/>'
+    + '<pageSetup paperSize="9" scale="'+(PRINT_SCALE[sh]||70)+'" fitToWidth="1" fitToHeight="0" orientation="landscape"/>'
     + hf
     + '</worksheet>';
 }
@@ -6878,7 +7004,7 @@ async function libToMain(c){
   OV = {}; FOV = {}; DEL = {}; SEL = {}; SELG = {}; SELA = {}; ADD = {}; IMPKEEP = new Set(); _grp = null; WBREPLACED = true;
   if(c.sum && c.sum.name){ INFO.name = libCleanName(c.sum.name); document.getElementById('inpName').value = INFO.name; }
   document.getElementById('colSrc').hidden = true;
-  save(); renderWage(); renderRates(); renderSheet(); goInfoTab(); syncInfoNow();
+  save(); renderWage(); renderRates(); renderSheet(); goInfoStep2(); syncInfoNow();
   const empty = SHEETS.filter(sh=>!Object.keys(WB.cells[sh]||{}).length);
   if(empty.length) toast('이 파일에서 「' + empty.join(' · ') + '」 시트를 찾지 못해 붕니다. 원본 엑셀의 시트 이름을 확인하십시오.');
 }
