@@ -728,8 +728,8 @@ body.sbon.sbmin #aiBack{right:276px}
       <button class="mini" id="btnInfoSave" title="암호를 걸어 작업 파일(.educost)로 내려받습니다">파일로 저장</button>
       <button class="mini" id="btnInfoLoad" title="저장해 둔 작업 파일(.educost)을 엽니다">파일 불러오기</button>
       <button class="mini primaryish" id="btnExportTop">내역서 엑셀 내보내기</button>
-      <input type="file" id="sideFile" accept=".xlsx,.json" hidden="">
-      <div id="appVer" style="text-align:right; font-size:11px; color:var(--sub); margin-top:4px; letter-spacing:.02em">v1.0</div>
+      <input type="file" id="sideFile" accept=".xlsx,.xls,.xlsm,.json" hidden="">
+      <div id="appVer" style="text-align:right; font-size:11px; color:var(--sub); margin-top:4px; letter-spacing:.02em">v1.1</div>
     </div>
   </div>
   <nav class="tabs" id="tabs"><button data-t="info" class="">공사정보</button><button data-t="sheets" class="on">내역서</button><button data-t="qty">물량산출</button><button data-t="current">현행화</button><button data-t="lib">내역서 모음</button></nav>
@@ -737,10 +737,10 @@ body.sbon.sbmin #aiBack{right:276px}
 <main>
   <section id="pane-info" class="pane">
     <div class="panel2">
-      <div class="ph"><b>1 · 내역서 불러오기</b><span>모음에서 고르거나 설계내역서 엑셀(.xlsx)을 직접 엽니다 → 2단계 공사정보 확인 → 내역서 탭</span></div>
+      <div class="ph"><b>1 · 내역서 불러오기</b><span>모음에서 고르거나 설계내역서 엑셀(.xlsx·.xls)을 직접 엽니다 → 2단계 공사정보 확인 → 내역서 탭</span></div>
       <div class="prow">
         <button class="mini primaryish" id="btnGoLib">내역서 모음에서 고르기</button>
-        <input type="file" id="impFile" accept=".xlsx,.educost,.json" hidden="">
+        <input type="file" id="impFile" accept=".xlsx,.xls,.xlsm,.educost,.json" hidden="">
         <button class="mini" id="btnImpPick">엑셀 파일 열기</button>
         <span id="impInfo" style="font-size:12px; color:var(--sub)"></span>
         <button class="mini" id="btnImpClear" style="margin-left:auto">가져온 항목 비우기</button>
@@ -749,6 +749,7 @@ body.sbon.sbmin #aiBack{right:276px}
         <b style="font-size:12.5px">지금 열린 내역서</b>
         <span id="infoNow" style="font-size:12px; color:var(--sub)"></span>
       </div>
+      <details id="impDiag" hidden style="font-size:12px; margin:4px 0 8px"><summary style="cursor:pointer; color:var(--sub)">읽기 진단</summary><div id="impDiagBody" style="margin-top:6px"></div></details>
       <div id="impPick" hidden>
         <div class="prow" id="impSheetRow" style="border-top:1px dashed var(--line2); padding-top:10px; flex-wrap:wrap">
           <label>가젤올 시트</label>
@@ -824,7 +825,7 @@ body.sbon.sbmin #aiBack{right:276px}
         <button class="mini primaryish" id="btnLibDir">공유폴더 연동 중 — 공사내역서모음(test)</button>
         <button class="mini" id="btnLibScan">새 파일 읽기</button>
         <input type="file" id="libDirIn" webkitdirectory="" multiple="" hidden="">
-        <input type="file" id="libFile" accept=".xlsx" multiple="" hidden="">
+        <input type="file" id="libFile" accept=".xlsx,.xls,.xlsm" multiple="" hidden="">
         <button class="mini" id="btnLibAdd">엑셀 직접 추가</button>
         <input class="mini" id="libQ" type="search" placeholder="공사명·공종 찾기" style="width:150px">
         <span id="libInfo" style="font-size:12px; color:var(--sub)"><button class="mini primaryish" id="btnLibGrant">팀 공유폴더 「공사내역서모음(test)」 새 파일 읽기</button></span>
@@ -945,7 +946,7 @@ body.sbon.sbmin #aiBack{right:276px}
       <span id="mainHint" style="font-size:11.5px; color:var(--sub)"></span>
     </div>
     <div class="bar tabsbar" id="mainToolBar2" style="flex-wrap:wrap; row-gap:6px">
-      <input type="file" id="srcFileInput" accept=".xlsx" hidden="">
+      <input type="file" id="srcFileInput" accept=".xlsx,.xls,.xlsm" hidden="">
       <span class="tgrp">
         <input id="inpGongName" placeholder="새 공종명 (예: 07.도장공사)" style="font:inherit; font-size:12px; padding:4px 7px; border:1px solid var(--line); background:var(--paper); width:170px">
         <input id="inpGongRows" value="8" title="빈 항목 행 수" style="font:inherit; font-size:12px; padding:4px 7px; border:1px solid var(--line); background:var(--paper); width:42px; text-align:right">
@@ -4560,67 +4561,175 @@ document.getElementById('btnRateReset').onclick = ()=>{
   save(); renderRates(); if(!document.getElementById('pane-sheet').hidden) renderSheet();
   toast('원본 요율로 되돌렸습니다.');
 };
-/* ---------- 다른 내역서 가져오기 (xlsx 읽기) ---------- */
+/* ---------- 다른 내역서 가져오기 (xlsx·xls·xlsm 읽기) ---------- */
 const XL_SHEETS = ['원가계산서','공종별집계표','공종별내역서','일위대가목록','일위대가','단가대비표'];
+/* 표준 양식의 머리글 행·열 자리 — 다른 적산프로그램 서식은 머리글 글자를 읽어 이 자리로 옮깁니다 */
+const XL_LAYOUT = {
+  '공종별집계표': {hdr:3, sub:true,  cols:{품명:'A',규격:'B',단위:'C',수량:'D',재료비:'E',재료비금액:'F',노무비:'G',노무비금액:'H',경비:'I',경비금액:'J',합계:'K',합계금액:'L',비고:'M',공종코드:'N'}},
+  '공종별내역서': {hdr:2, sub:true,  cols:{품명:'A',규격:'B',단위:'C',수량:'D',재료비:'E',재료비금액:'F',노무비:'G',노무비금액:'H',경비:'I',경비금액:'J',합계:'K',합계금액:'L',비고:'M',품목코드:'N',공종코드:'Q'}},
+  '일위대가':     {hdr:2, sub:true,  cols:{품명:'A',규격:'B',단위:'C',수량:'D',재료비:'E',재료비금액:'F',노무비:'G',노무비금액:'H',경비:'I',경비금액:'J',합계:'K',합계금액:'L',비고:'M',일위대가:'N',품목코드:'O'}},
+  '일위대가목록': {hdr:3, sub:false, cols:{코드:'A',품명:'B',규격:'C',단위:'D',재료비:'E',노무비:'F',경비:'G',합계:'H',번호:'I',비고:'J'}},
+  '단가대비표':   {hdr:3, sub:true,  cols:{코드:'A',품명:'B',규격:'C',단위:'D'}, detectOnly:true}
+};
+const XL_ALIAS = {
+  품명:['품명','명칭','품목명','공종명','품목','공종','내역'], 규격:['규격','사양','규격및사양'], 단위:['단위'], 수량:['수량','물량'],
+  재료비:['재료비','자재비','재료비단가','재료단가'], 재료비금액:['재료비금액','재료금액'],
+  노무비:['노무비','인건비','노무비단가','노무단가'], 노무비금액:['노무비금액','노무금액'],
+  경비:['경비','경비단가'], 경비금액:['경비금액'], 합계:['합계','계','합계단가'], 합계금액:['합계금액'],
+  비고:['비고'], 코드:['코드','호표코드','일위코드'], 번호:['번호','호표번호'], 공종코드:['공종코드'], 품목코드:['품목코드','자재코드'], 일위대가:['일위대가','일위대가코드']
+};
+function xlDetectLayout(sh, cs){
+  const L = XL_LAYOUT[sh]; if(!L) return null;
+  const nz = s => String(s==null?'':s).replace(/[\s\u00a0()（）]/g,'');
+  const keyOf = t => { const n = nz(t); if(!n) return null; for(const k of Object.keys(XL_ALIAS)) if(XL_ALIAS[k].indexOf(n)>=0) return k; return null; };
+  const rows = {};
+  for(const a of Object.keys(cs)){ const g=a.match(/^([A-Z]+)(\d+)$/); if(g && +g[2]<=15) (rows[+g[2]] = rows[+g[2]]||{})[g[1]] = cs[a].v; }
+  for(let r=1;r<=15;r++){ const row = rows[r]; if(!row) continue;
+    const f = {}; for(const c of Object.keys(row).sort((a,b)=>colIdx(a)-colIdx(b))){ const k = keyOf(row[c]); if(k && !f[k]) f[k] = c; }
+    if(f.품명 && (f.수량 || f.규격 || f.코드) && Object.keys(f).length>=3){
+      const nxt = rows[r+1] || {};
+      const sub = Object.keys(nxt).some(c=>/^(단가|금액)$/.test(nz(nxt[c])));
+      if(sub) for(const k of ['재료비','노무비','경비','합계']){          /* 단가·금액 두 칸짜리 머리글 — 금액 열은 단가 바로 다음(또는 '금액' 표시 칸) */
+        if(!f[k] || f[k+'금액']) continue;
+        const ci = colIdx(f[k]); let amt = null;
+        for(let j=ci+1; j<=ci+3; j++){ const t = nz(nxt[colName(j)]); if(t==='금액'){ amt = colName(j); break; } if(t==='단가' && j>ci+1) break; }
+        f[k+'금액'] = amt || colName(ci+1);
+      }
+      return {hdr:r, sub, found:f, ok:true};
+    } }
+  return {hdr:0, ok:false, found:{}};
+}
+/* 머리글로 알아낸 열·행을 표준 자리로 옮기고, 이 시트를 가리키는 모든 수식 참조를 같이 옮깁니다.
+   반환: false=이미 표준, null=인식 실패(그대로 둠), {colMap,dr,desc}=옮김 */
+function xlRemapSheet(wb, sh, det){
+  const L = XL_LAYOUT[sh]; if(!L || L.detectOnly || !det || !det.ok) return det && det.ok===false ? null : false;
+  const colMap = {}; let diff = det.hdr !== L.hdr;
+  for(const k of Object.keys(det.found)) if(L.cols[k]){ colMap[det.found[k]] = L.cols[k]; if(det.found[k] !== L.cols[k]) diff = true; }
+  if(!diff) return false;
+  if(Object.keys(colMap).length < 4) return null;
+  const dr = (L.hdr + (L.sub?2:1)) - (det.hdr + (det.sub?2:1));
+  const cs = wb.cells[sh], meta = wb.meta[sh];
+  const usedStd = new Set(Object.values(colMap));
+  const allCols = new Set();
+  for(const a of Object.keys(cs)) allCols.add(a.match(/^[A-Z]+/)[0]);
+  for(const a of Object.keys(meta.blank||{})) allCols.add(a.match(/^[A-Z]+/)[0]);
+  let next = Math.max.apply(null, Object.values(L.cols).map(colIdx)) + 1;
+  for(const c of [...allCols].sort((a,b)=>colIdx(a)-colIdx(b))){ if(colMap[c]) continue; while(usedStd.has(colName(next))) next++; colMap[c] = colName(next); usedStd.add(colName(next)); }
+  const mapAddr = a => { const g=a.match(/^([A-Z]+)(\d+)$/); if(!g) return null; const r=+g[2]+dr; return r>=1 ? (colMap[g[1]]||g[1]) + r : null; };
+  const ncs = {}, nblank = {}, nht = {}; let maxR=0, maxC=0;
+  for(const a of Object.keys(cs)){ const n = mapAddr(a); if(!n) continue; ncs[n] = cs[a]; const g=n.match(/^([A-Z]+)(\d+)$/); if(+g[2]>maxR) maxR=+g[2]; const ci=colIdx(g[1]); if(ci>maxC) maxC=ci; }
+  for(const a of Object.keys(meta.blank||{})){ const n=mapAddr(a); if(n) nblank[n]=meta.blank[a]; }
+  for(const r of Object.keys(meta.rowHt||{})) if(+r+dr>=1) nht[+r+dr] = meta.rowHt[r];
+  const merges = (meta.merges||[]).map(m=>m.split(':').map(mapAddr)).filter(p=>p.length===2&&p[0]&&p[1]).map(p=>p.join(':'));
+  wb.cells[sh] = ncs; Object.assign(meta, {maxR, maxC, blank:nblank, rowHt:nht, merges, cols:[]});
+  const REF = /(?:'((?:[^']|'')+)'!|([A-Za-z0-9_\uAC00-\uD7A3]+)!)?(?<![A-Za-z0-9_\uAC00-\uD7A3.])(\$?)([A-Z]{1,3})(\$?)(\d+)(?![A-Za-z0-9_(])/g;
+  for(const s2 of Object.keys(wb.cells)) for(const a of Object.keys(wb.cells[s2])){
+    const c = wb.cells[s2][a]; if(!c || !c.f) continue;
+    c.f = String(c.f).replace(REF, (m, q, b, d1, col, d2, row) => {
+      const tgt = (q||b) ? String(q||b).replace(/''/g,"'").trim() : s2;
+      if(tgt !== sh) return m;
+      const nr = +row + dr; if(nr < 1) return m;
+      return (q ? "'"+q+"'!" : b ? b+'!' : '') + d1 + (colMap[col]||col) + d2 + nr;
+    });
+  }
+  const stdSet = new Set(Object.values(L.cols));
+  const moved = Object.keys(colMap).filter(c=>colMap[c]!==c && stdSet.has(colMap[c])).map(c=>c+'→'+colMap[c]);
+  return {colMap, dr, desc:(dr ? '행 '+(dr>0?'+':'')+dr+' ' : '') + moved.slice(0,6).join(' ') + (moved.length>6 ? ' …' : '')};
+}
+/* SheetJS 는 물량산출 틀(<template id="qtyTpl">) 안에 들어 있어 본 화면에는 없습니다 — 처음 쓸 때 꺼내 옵니다 */
+function ensureXLSX(){
+  if(typeof window.XLSX !== 'undefined' && window.XLSX.read) return true;
+  try{
+    const t = document.getElementById('qtyTpl'); if(!t) return false;
+    const sc = [...t.content.querySelectorAll('script')].find(s=>/xlsx-js-style|make_xlsx_lib/.test(s.textContent.slice(0,300)));
+    if(!sc) return false;
+    (0, eval)(sc.textContent);
+    return typeof window.XLSX !== 'undefined' && !!window.XLSX.read;
+  }catch(e){ return false; }
+}
 async function readXlsx(file, assign){
   const buf = new Uint8Array(await file.arrayBuffer());
+  const hasJS = ensureXLSX();
+  if(!buf.length) throw new Error('빈 파일입니다.');
+  const isZip = buf[0]===0x50 && buf[1]===0x4b;
+  const isCfb = buf[0]===0xd0 && buf[1]===0xcf;
+  if(!isZip && !isCfb) throw new Error('엑셀 파일(xlsx·xls·xlsm)이 아닙니다.');
   const u16 = o => buf[o]|buf[o+1]<<8, u32 = o => (buf[o]|buf[o+1]<<8|buf[o+2]<<16|buf[o+3]<<24)>>>0;
-  let eo = -1; for(let i=buf.length-22;i>=0;i--) if(u32(i)===0x06054b50){ eo=i; break; }
-  if(eo<0) throw new Error('xlsx 파일이 아닙니다.');
-  const cnt = u16(eo+10); let p = u32(eo+16); const ents = {};
-  for(let i=0;i<cnt;i++){
-    const nl=u16(p+28), el=u16(p+30), cl=u16(p+32);
-    ents[new TextDecoder().decode(buf.slice(p+46,p+46+nl))] = {m:u16(p+10), c:u32(p+20), l:u32(p+42)};
-    p += 46+nl+el+cl;
+  const ents = {};
+  if(isZip){
+    let eo = -1; for(let i=buf.length-22;i>=0;i--) if(u32(i)===0x06054b50){ eo=i; break; }
+    if(eo >= 0){
+      const cnt = u16(eo+10); let p = u32(eo+16);
+      for(let i=0;i<cnt && p+46<=buf.length;i++){
+        const nl=u16(p+28), el=u16(p+30), cl=u16(p+32);
+        ents[new TextDecoder().decode(buf.slice(p+46,p+46+nl))] = {m:u16(p+10), c:u32(p+20), l:u32(p+42)};
+        p += 46+nl+el+cl;
+      }
+    }
   }
   async function txt(name){
     const f = ents[name]; if(!f) return '';
-    const nl = u16(f.l+26), el = u16(f.l+28), st = f.l+30+nl+el;
-    const d = buf.slice(st, st+f.c);
-    if(f.m===0) return new TextDecoder().decode(d);
-    return await new Response(new Blob([d]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    try{
+      const nl = u16(f.l+26), el = u16(f.l+28), st = f.l+30+nl+el;
+      const d = buf.slice(st, st+f.c);
+      if(f.m===0) return new TextDecoder().decode(d);
+      return await new Response(new Blob([d]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    }catch(e){ return ''; }
   }
-  const dec = s => s===undefined ? s : s.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+  const dec = s => s===undefined ? s : s.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&apos;/g,"'").replace(/&amp;/g,'&');
+  /* SheetJS 로 한 번 더 읽습니다 — 공유수식 전개·inlineStr·논리값·xls·xlsm 처리. 서식 번호(s)는 아래 원본 XML 에서 가져옵니다 */
+  let JS = null, jsErr = null;
+  if(!hasJS) jsErr = new Error('보조 판독기(SheetJS)를 찾지 못함');
+  else try{ JS = XLSX.read(buf, {type:'array', cellFormula:true, cellNF:false, cellHTML:false, cellText:false, cellStyles:!isZip, sheetStubs:false}); }
+  catch(err){ jsErr = err; }
+  if(!JS && !isZip) throw new Error('엑셀 파일로 읽지 못했습니다' + (jsErr && jsErr.message ? ' (' + jsErr.message + ')' : '') + '. 암호가 걸렸거나 손상된 파일일 수 있습니다.');
+  const jsName = {}; if(JS) for(const n of JS.SheetNames) jsName[String(n).trim()] = n;
   const strs = [];
   for(const m of (await txt('xl/sharedStrings.xml')).matchAll(/<si>([\s\S]*?)<\/si>/g)){
-    let t=''; for(const tm of m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)) t += tm[1];
+    let t=''; for(const tm of m[1].replace(/<rPh[\s\S]*?<\/rPh>/g,'').matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)) t += tm[1];
     strs.push(dec(t));
   }
   const rels = {};
-  for(const m of (await txt('xl/_rels/workbook.xml.rels')).matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g)) rels[m[1]] = m[2];
+  for(const m of (await txt('xl/_rels/workbook.xml.rels')).matchAll(/<Relationship\b[^>]*>/g)){
+    const id = (m[0].match(/\bId="([^"]+)"/)||[])[1], tg = (m[0].match(/\bTarget="([^"]+)"/)||[])[1];
+    if(id && tg) rels[id] = tg;
+  }
   const wbx = await txt('xl/workbook.xml');
-  const map = {};
+  const map = {};                                                 /* 시트이름 → 파트 경로(xlsx) 또는 null(SheetJS 로만) */
   for(const m of wbx.matchAll(/<sheet\b[^>]*\/?>/g)){
     const tag = m[0];
-    const nm = (tag.match(/name="([^"]*)"/)||[])[1];
-    const rid = (tag.match(/r:id="([^"]*)"/)||[])[1];
+    const nm = (tag.match(/\bname="([^"]*)"/)||[])[1];
+    const rid = (tag.match(/\b[A-Za-z0-9]*:?id="([^"]*)"/)||[])[1];
     if(nm === undefined || !rid) continue;
-    const t = rels[rid]; if(t) map[dec(nm).trim()] = 'xl/' + t.replace(/^\/?xl\//,'');
+    const t = rels[rid]; if(t) map[dec(nm).trim()] = /^\//.test(t) ? t.slice(1) : ('xl/' + t.replace(/^\/?xl\//,''));
   }
+  if(JS) for(const n of JS.SheetNames){ const k = String(n).trim(); if(!(k in map)) map[k] = null; }
+  if(!Object.keys(map).length) throw new Error('통합문서에서 시트를 찾지 못했습니다.');
   const cells = {}, meta = {};
   const missing = [];
+  const diag = {format: isCfb ? 'xls' : (Object.keys(ents).some(n=>/^xl\/worksheets\/[^/]+\.bin$/.test(n)) ? 'xlsb' : 'xlsx'), sheets:{}, extra:[], missing, notes:[]};
+  if(jsErr) diag.notes.push('보조 판독기 실패: ' + (jsErr.message||jsErr));
   /* 시트 이름이 조금 다를 때도 찾습니다 — 띄어쓰기·다른 이름 허용 */
   const ALIAS = {
-    '원가계산서':['공사원가계산서','원가계산','원가산정서','공사원가'],
-    '공종별집계표':['집계표','공종집계표','공사별집계표'],
-    '공종별내역서':['내역서','공종내역서','산적내역서'],
-    '일위대가목록':['일위대가목록표','일위목록'],
-    '일위대가':['일위대가표','일위대가산출서'],
-    '단가대비표':['단가대조표','자재단가대비표','단가산출서','단가대바표']
+    '원가계산서':['공사원가계산서','원가계산','원가산정서','공사원가','원가계산서총괄','총괄원가계산서'],
+    '공종별집계표':['집계표','공종집계표','공사별집계표','공종별집계','내역집계표'],
+    '공종별내역서':['내역서','공종내역서','산적내역서','공종별내역','산출내역서','세부내역서'],
+    '일위대가목록':['일위대가목록표','일위목록','일위대가표목록','일위대가호표목록'],
+    '일위대가':['일위대가표','일위대가산출서','일위대가호표'],
+    '단가대비표':['단가대조표','자재단가대비표','단가산출서','단가대바표','자재단가표','단가표']
   };
   const norm = s => String(s).replace(/[\s\u00a0]/g,'');
   const normMap = {};
-  for(const k of Object.keys(map)) normMap[norm(k)] = k;          /* 정규화한 이름 → 원래 시트이름 */
-  const used = new Set();                                         /* 이미 표준 시트로 잡은 원본 시트이름 */
+  for(const k of Object.keys(map)) normMap[norm(k)] = k;
+  const used = new Set();
   const findName = nm => {
     let hit = null;
-    if(map[nm]) hit = nm;
+    if(map[nm] !== undefined) hit = nm;
     else {
       const n = norm(nm);
       if(normMap[n] && !used.has(normMap[n])) hit = normMap[n];
       if(!hit) for(const a of (ALIAS[nm]||[])) if(normMap[norm(a)] && !used.has(normMap[norm(a)])){ hit = normMap[norm(a)]; break; }
       if(!hit){
-        /* 부분 일치 — 다른 표준 시트이름을 포함하는 시트(예: 일위대가를 찾는데 일위대가목록)는 제외, 가장 짧은 이름 우선 */
         const others = XL_SHEETS.filter(s2=>s2!==nm).map(norm);
         const keys = Object.keys(normMap).filter(k=>!used.has(normMap[k]) && !others.some(o=>k.indexOf(o)>=0))
           .filter(k=>k.indexOf(n) >= 0 || n.indexOf(k) >= 0).sort((a,b)=>a.length-b.length);
@@ -4630,36 +4739,87 @@ async function readXlsx(file, assign){
     if(hit) used.add(hit);
     return hit;
   };
-  const rename = {};                                              /* 원래 시트이름 → 표준 이름 */
-  const matched = {};                                             /* 표준 이름 → 원래 시트이름 */
-  for(const nm of XL_SHEETS){
-    let orig;
-    if(assign && Object.prototype.hasOwnProperty.call(assign, nm)){ orig = assign[nm] && map[assign[nm]] ? assign[nm] : null; if(orig) used.add(orig); }
-    else orig = findName(nm);
-    if(orig) matched[nm] = orig;
-    const path = orig ? map[orig] : null;
-    if(orig && orig !== nm) rename[orig] = nm;
-    if(!path){ cells[nm] = {}; meta[nm] = {maxR:0, maxC:0, cols:[], merges:[]}; missing.push(nm); continue; }
-    const x = await txt(path);
+  /* 원본 XML 에서 값·수식·서식번호 읽기 */
+  const fromXml = x => {
     const cs = {}, blank = {}, rowHt = {}; let maxR=0, maxC=0;
-    for(const rm of x.matchAll(/<row r="(\d+)"[^>]*?ht="([\d.]+)"/g)) rowHt[+rm[1]] = +rm[2];
-    for(const cm of x.matchAll(/<c r="([A-Z]+)(\d+)"([^>]*?)(\/>|>([\s\S]*?)<\/c>)/g)){
-      const col=cm[1], row=+cm[2], attrs=cm[3], inner=cm[5]||'';
-      const t=(attrs.match(/t="([^"]+)"/)||[])[1], s=(attrs.match(/s="(\d+)"/)||[])[1];
-      const f=dec((inner.match(/<f[^>]*>([\s\S]*?)<\/f>/)||[])[1]);
+    for(const rm of x.matchAll(/<row\b[^>]*?\br="(\d+)"[^>]*?\bht="([\d.]+)"/g)) rowHt[+rm[1]] = +rm[2];
+    for(const cm of x.matchAll(/<c\b([^>]*?)(\/>|>([\s\S]*?)<\/c>)/g)){
+      const attrs=cm[1], inner=cm[3]||'';
+      const r = (attrs.match(/\br="([A-Z]+)(\d+)"/)||[]); if(!r[1]) continue;
+      const col=r[1], row=+r[2];
+      const t=(attrs.match(/\bt="([^"]+)"/)||[])[1], s=(attrs.match(/\bs="(\d+)"/)||[])[1];
+      const fm = inner.match(/<f\b([^>]*)>([\s\S]*?)<\/f>/);
+      let f = fm ? dec(fm[2]) : undefined;
+      if(f === '') f = undefined;                                /* 공유수식 종속 칸 — SheetJS 결과로 채움 */
       const v=(inner.match(/<v>([\s\S]*?)<\/v>/)||[])[1];
-      let val = v===undefined ? undefined : (t==='s' ? strs[+v] : (t==='str' ? dec(v) : +v));
+      let val;
+      if(t==='inlineStr'){ let tt=''; for(const tm of inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)) tt += tm[1]; val = dec(tt); }
+      else if(v===undefined) val = undefined;
+      else if(t==='s') val = strs[+v];
+      else if(t==='str') val = dec(v);
+      else if(t==='b') val = +v ? 1 : 0;
+      else if(t==='e') val = undefined;
+      else val = +v;
       if(f===undefined && (val===undefined || val==='')){ if(s) blank[col+row] = +s; continue; }
       cs[col+row] = {f:f, v:val, s:s?+s:0};
       if(row>maxR) maxR=row;
       const ci = colIdx(col); if(ci>maxC) maxC=ci;
     }
     const cols = [];
-    for(const c of (x.match(/<col [^>]*\/>/g)||[])) cols.push({
-      min:+c.match(/min="(\d+)"/)[1], max:+c.match(/max="(\d+)"/)[1],
-      w:parseFloat((c.match(/width="([\d.]+)"/)||[0,0])[1]), hidden:/hidden="1"/.test(c)});
-    const merges = (x.match(/<mergeCell ref="[^"]+"/g)||[]).map(m=>m.match(/ref="([^"]+)"/)[1]);
-    cells[nm] = cs; meta[nm] = {maxR, maxC, cols, merges, blank, rowHt};
+    for(const c of (x.match(/<col\b[^>]*\/>/g)||[])){ const mn=c.match(/\bmin="(\d+)"/), mx=c.match(/\bmax="(\d+)"/); if(!mn||!mx) continue; cols.push({
+      min:+mn[1], max:+mx[1], w:parseFloat((c.match(/\bwidth="([\d.]+)"/)||[0,0])[1]), hidden:/\bhidden="(1|true)"/.test(c)}); }
+    const merges = (x.match(/<mergeCell\b[^>]*\bref="[^"]+"/g)||[]).map(m=>m.match(/\bref="([^"]+)"/)[1]);
+    return {cs, blank, rowHt, cols, merges, maxR, maxC};
+  };
+  const jsVal = c => c.t==='e' ? undefined : c.t==='b' ? (c.v?1:0) : c.t==='d' ? String(c.w||c.v) : c.v;
+  const fromJS = ws => {
+    const cs = {}, rowHt = {}; let maxR=0, maxC=0;
+    if(ws) for(const k of Object.keys(ws)){
+      if(k[0]==='!') continue;
+      const c = ws[k]; if(!c || c.t==='z') continue;
+      const g = k.match(/^([A-Z]+)(\d+)$/); if(!g) continue;
+      const f = c.f ? String(c.f) : undefined, val = jsVal(c);
+      if(f===undefined && (val===undefined || val==='')) continue;
+      cs[k] = {f:f, v:(val===undefined ? 0 : val), s:0};
+      if(+g[2]>maxR) maxR=+g[2]; const ci=colIdx(g[1]); if(ci>maxC) maxC=ci;
+    }
+    const cols = ((ws && ws['!cols'])||[]).map((c,i)=>c ? {min:i+1, max:i+1, w:+(c.width||c.wch||9), hidden:!!c.hidden} : null).filter(Boolean);
+    const merges = ((ws && ws['!merges'])||[]).map(m=>XLSX.utils.encode_range(m));
+    ((ws && ws['!rows'])||[]).forEach((r,i)=>{ if(r && r.hpt) rowHt[i+1] = r.hpt; });
+    return {cs, blank:{}, rowHt, cols, merges, maxR, maxC};
+  };
+  const rename = {}, matched = {};
+  for(const nm of XL_SHEETS){
+    let orig;
+    if(assign && Object.prototype.hasOwnProperty.call(assign, nm)){ orig = assign[nm] && map[assign[nm]] !== undefined ? assign[nm] : null; if(orig) used.add(orig); }
+    else orig = findName(nm);
+    if(orig) matched[nm] = orig;
+    if(orig && orig !== nm) rename[orig] = nm;
+    if(!orig){ cells[nm] = {}; meta[nm] = {maxR:0, maxC:0, cols:[], merges:[]}; missing.push(nm); continue; }
+    const d = diag.sheets[nm] = {orig, cells:0, formulas:0, shared:0, recovered:0, frozen:0, ref:0, hdr:0, remap:false};
+    try{
+      const path = map[orig];
+      const x = (path && /\.xml$/i.test(path)) ? await txt(path) : '';
+      const ws = JS ? JS.Sheets[jsName[orig] !== undefined ? jsName[orig] : orig] : null;
+      let S = x ? fromXml(x) : null;
+      if(!S){ if(!ws) throw new Error('시트 내용을 읽지 못했습니다.'); S = fromJS(ws); }
+      else if(ws){
+        for(const k of Object.keys(ws)){
+          if(k[0]==='!') continue;
+          const c = ws[k]; if(!c || c.t==='z') continue;
+          const g = k.match(/^([A-Z]+)(\d+)$/); if(!g) continue;
+          const f = c.f ? String(c.f) : undefined, val = jsVal(c);
+          const ours = S.cs[k];
+          if(!ours){
+            if(f===undefined && (val===undefined || val==='')) continue;
+            S.cs[k] = {f:f, v:(val===undefined ? 0 : val), s:S.blank[k]||0}; delete S.blank[k]; d.recovered++;
+            if(+g[2]>S.maxR) S.maxR=+g[2]; const ci=colIdx(g[1]); if(ci>S.maxC) S.maxC=ci;
+          } else if(f!==undefined && ours.f===undefined){ ours.f = f; d.shared++; }
+        }
+      }
+      cells[nm] = S.cs; meta[nm] = {maxR:S.maxR, maxC:S.maxC, cols:S.cols, merges:S.merges, blank:S.blank, rowHt:S.rowHt};
+      d.cells = Object.keys(S.cs).length;
+    }catch(err){ throw new Error('「' + orig + '」 시트를 읽는 중 오류: ' + (err && err.message || err)); }
   }
   /* 원본 서식표를 그대로 보관해 내보낼 때 같은 글꼴·괘선·숫자서식으로 나가게 합니다 */
   try{
@@ -4669,8 +4829,8 @@ async function readXlsx(file, assign){
       meta.__styles = stx;
     }
   }catch(e){}
-  if(missing.length === XL_SHEETS.length) throw new Error('설계내역서 시트를 찾지 못했습니다.');
-  if(!assign && missing.indexOf('공종별내역서') >= 0 && missing.indexOf('일위대가목록') >= 0) throw new Error('공종별내역서·일위대가목록 시트가 모두 없습니다.');
+  if(missing.length === XL_SHEETS.length) throw new Error('설계내역서 시트를 찾지 못했습니다. 파일의 시트: ' + Object.keys(map).join(', '));
+  if(!assign && missing.indexOf('공종별내역서') >= 0 && missing.indexOf('일위대가목록') >= 0) throw new Error('공종별내역서·일위대가목록 시트가 모두 없습니다. 파일의 시트: ' + Object.keys(map).join(', '));
   /* 표준 6시트 밖의 시트(표지·노임단가·수량산출 등)는 가져오지 않고,
      그 시트를 바라보는 수식은 엑셀이 계산해 둔 값으로 굳혀 참조가 끊기지 않게 합니다 */
   const extra = new Set(Object.keys(map).filter(k=>!used.has(k) && XL_SHEETS.indexOf(k) < 0));
@@ -4682,20 +4842,58 @@ async function readXlsx(file, assign){
       const c = cells[sh][a]; if(!c || !c.f) continue;
       let hitX = false;
       for(const mm of String(c.f).matchAll(refSheet)){ const nm2 = String(mm[1]||mm[2]).trim(); if(extra.has(nm2) || extraN.has(norm(nm2))){ hitX = true; break; } }
-      if(hitX){ delete c.f; if(c.v === undefined) c.v = 0; frozen++; }
+      if(hitX){ delete c.f; if(c.v === undefined) c.v = 0; frozen++; if(diag.sheets[sh]) diag.sheets[sh].frozen++; }
     }
   }
   /* 수식 안의 시트이름도 표준 이름으로 바꿔줍니다 — '집계표 (2)'!F5 같은 참조가 끊기지 않게 */
   const rx = Object.keys(rename);
   if(rx.length){
-    const esc2 = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const esc2 = s => s.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
     const pat = new RegExp("'(" + rx.map(esc2).join('|') + ")'!|(?:^|(?<![\\w가-힣]))(" + rx.map(esc2).join('|') + ")!", 'g');
     for(const sh of Object.keys(cells)) for(const a of Object.keys(cells[sh])){
       const c = cells[sh][a];
       if(c && c.f) c.f = String(c.f).replace(pat, (mm, q, b) => rename[q || b] + '!');
     }
   }
-  return {cells, meta, missing, extra:[...extra], frozen, sheets:Object.keys(map), matched};
+  /* 머리글로 열 자리를 알아내어 표준 자리로 옮깁니다 */
+  const wbT = {cells, meta};
+  for(const sh of XL_SHEETS){
+    const d = diag.sheets[sh]; if(!d || !XL_LAYOUT[sh]) continue;
+    const det = xlDetectLayout(sh, cells[sh]);
+    d.hdr = det ? det.hdr : 0;
+    const r = xlRemapSheet(wbT, sh, det);
+    d.remap = r ? r.desc : r;
+    meta[sh].hdr = d.hdr;
+  }
+  for(const sh of XL_SHEETS){ const d = diag.sheets[sh]; if(!d) continue;
+    for(const a of Object.keys(cells[sh])){ const c = cells[sh][a]; if(c && c.f){ d.formulas++; if(/#REF!/.test(c.f)) d.ref++; } } }
+  diag.extra = [...extra];
+  return {cells, meta, missing, extra:[...extra], frozen, sheets:Object.keys(map), matched, diag};
+}
+/* 읽기 진단 표 */
+function impDiagRender(imp){
+  const d = document.getElementById('impDiag'), b = document.getElementById('impDiagBody'); if(!d || !b) return;
+  if(!imp || !imp.diag){ d.hidden = true; b.innerHTML = ''; return; }
+  const g = imp.diag, esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  let warnN = 0;
+  const rows = XL_SHEETS.map(sh=>{
+    const s = g.sheets[sh];
+    if(!s){ warnN++; return '<tr><td>'+sh+'</td><td colspan="5" style="color:#b45309">파일에 없음 — 빈 시트로 둡니다</td></tr>'; }
+    const w = [];
+    if(s.remap === null) w.push('열 머리글을 알아보지 못해 표준 자리로 가정');
+    else if(s.remap) w.push('표준 자리로 옮김: ' + s.remap);
+    if(s.frozen) w.push('다른 시트를 보는 수식 ' + s.frozen + '개를 값으로 굳힘');
+    if(s.ref) w.push('#REF! ' + s.ref + '개');
+    if(!s.hdr && XL_LAYOUT[sh]) w.push('머리글 행을 찾지 못함');
+    if(w.length) warnN++;
+    return '<tr><td>'+sh+'</td><td>'+esc(s.orig)+'</td><td style="text-align:right">'+s.cells.toLocaleString()+'</td><td style="text-align:right">'+s.formulas.toLocaleString()+'</td><td style="text-align:right">'+(s.shared+s.recovered).toLocaleString()+'</td><td>'+(w.map(esc).join(' · ')||'—')+'</td></tr>';
+  });
+  d.querySelector('summary').textContent = '읽기 진단 — ' + g.format.toUpperCase() + (warnN ? ' · 확인할 시트 ' + warnN + '개' : ' · 이상 없음');
+  b.innerHTML = '<table class="mt" style="font-size:12px; width:100%"><thead><tr><th>표준 시트</th><th>원본 시트</th><th>셀</th><th>수식</th><th>복원한 칸</th><th>비고</th></tr></thead><tbody>' + rows.join('') + '</tbody></table>'
+    + (g.extra.length ? '<div style="margin-top:4px; color:var(--sub)">건너뛴 시트: ' + esc(g.extra.join(' · ')) + '</div>' : '')
+    + (g.notes.length ? '<div style="margin-top:4px; color:#b45309">' + esc(g.notes.join(' · ')) + '</div>' : '')
+    + '<div style="margin-top:4px; color:var(--sub)">복원한 칸 = 공유수식·인라인 문자열 등 예전 판독기가 놓치던 칸</div>';
+  d.hidden = false;
 }
 /* 적산 프로그램이 값으로 굳혀 둔 계산 칸을 같은 규칙의 수식으로 되살림 */
 function normalizeWB(wb){
@@ -5108,9 +5306,10 @@ document.getElementById('impFile').addEventListener('change', async e=>{
       + ((IMP.extra && IMP.extra.length) ? ' · 표준 6시트 외 「' + IMP.extra.join(' · ') + '」 시트는 건너뜀' : '');
     renderImpList();
     renderImpSheets();
+    impDiagRender(IMP);
     IMPNAME = f.name;
   }catch(err){
-    IMP = null; document.getElementById('impPick').hidden = true;
+    IMP = null; document.getElementById('impPick').hidden = true; impDiagRender(null);
     document.getElementById('impInfo').textContent = '읽지 못했습니다: ' + err.message;
   }
 });
@@ -5835,7 +6034,7 @@ document.getElementById('sideFile').addEventListener('change', async e=>{
     const t = IMP.cells['원가계산서']['B2'];
     document.getElementById('srcName').textContent = (t && typeof t.v==='string') ? t.v.replace(/^공사명\s*:\s*/,'') : '불러온 내역서';
     document.getElementById('impInfo').textContent = f.name + ' — 호표 ' + Object.keys(IMP.cells['일위대가목록']).filter(a=>/^B\d+$/.test(a)).length + '건';
-    renderImpList();
+    renderImpList(); impDiagRender(IMP);
     openSplit(f.name);
     toast('불러왔습니다. 오른쪽에서 원가계산서부터 단가대비표까지 볼 수 있습니다.');
   }catch(err){
@@ -7344,7 +7543,7 @@ const libFind = id => LIB.find(c => c.id === +id);
 /* 공문 머리표시 「(행정지원과-33 (첨부))」 같은 앞붙임과 확장자를 벗깁니다 */
 function libCleanName(s){
   return String(s||'')
-    .replace(/\.xlsx$/i,'')
+    .replace(/\.xls[xm]?$/i,'')
     .replace(/^\s*\((?:[^()]|\([^()]*\))*\)\s*/,'')
     .replace(/^\s*\[(?:[^\[\]])*\]\s*/,'')
     .trim();
@@ -7485,7 +7684,7 @@ async function libDirScan(quiet){
     for await (const [nm, h] of LIBDIR.entries()){
       if(h.kind !== 'file' || /^~\$/.test(nm)) continue;
       if(/\.json$/i.test(nm)){ baks.push(h); continue; }
-      if(!/\.xlsx$/i.test(nm) || have.has(nm)) continue;
+      if(!/\.xls[xm]?$/i.test(nm) || have.has(nm)) continue;
       hs.push(h);
     }
   }catch(e){ if(!quiet){ toast('폴더를 읽지 못했습니다: ' + e.message); } return; }
@@ -7549,7 +7748,7 @@ document.getElementById('libDirIn') && document.getElementById('libDirIn').addEv
   if(!fs.length) return;
   const inf = document.getElementById('libInfo');
   const have = new Set(LIB.map(c=>c.file));
-  const xs = fs.filter(f=>/\.xlsx$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name));
+  const xs = fs.filter(f=>/\.xls[xm]?$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name));
   const js = fs.filter(f=>/\.json$/i.test(f.name));
   for(const f of js){ try{ await libImport(f, true); }catch(err){} }
   let ok = 0, n = 0;
