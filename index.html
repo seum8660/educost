@@ -3694,7 +3694,19 @@ function syncFrzLeft(id){
   const off = last.getBoundingClientRect().right - (wr.left + wrap.clientLeft);
   wrap.style.setProperty('--frzleft', Math.max(0, Math.round(off)) + 'px');
 }
+let _pruneSig = '';
+function autoPrune(){                       /* 참조 0인 호표를 기본으로 정리 — 상태가 바뀐 뒤 한 번만 */
+  try{
+    if(WB_PENDING || !WB.meta || !WB.meta['일위대가목록']) return;
+    const sig = Object.keys(DEL).map(s=>s+':'+Object.keys(DEL[s]).length).join('|') + '#' + (WB.meta['공종별내역서']||{}).maxR + '#' + (WB.meta['일위대가목록']||{}).maxR + '#' + Object.keys(ADD).map(s=>s+':'+Object.keys(ADD[s]).length).join('|') + '#' + Object.keys(FOV).map(s=>s+':'+Object.keys(FOV[s]).length).join('|');
+    if(sig === _pruneSig) return;
+    const n = pruneOrphanHopyo();
+    _pruneSig = Object.keys(DEL).map(s=>s+':'+Object.keys(DEL[s]).length).join('|') + '#' + (WB.meta['공종별내역서']||{}).maxR + '#' + (WB.meta['일위대가목록']||{}).maxR + '#' + Object.keys(ADD).map(s=>s+':'+Object.keys(ADD[s]).length).join('|') + '#' + Object.keys(FOV).map(s=>s+':'+Object.keys(FOV[s]).length).join('|');
+    if(n){ _grp = null; try{ save(); }catch(e){} toast('미사용 호표 '+n+'개를 정리했습니다.'); }
+  }catch(e){}
+}
 function renderSheet(){
+  autoPrune();
   const sh = curSheet, m = WB.meta[sh];
   const cols = visibleCols(sh), {anchor, covered} = mergeMaps(sh);
   const pick = (sh==='공종별내역서' || sh==='공종별집계표');
@@ -4036,6 +4048,12 @@ function cascadeCodes(hopyo, mats){
           if(isDeleted('일위대가', r)) continue;
           const o = rawv('일위대가','O'+r);
           if(o){ if(rawv('일위대가','P'+r)==='T') hopyo.add(o); else if(rawv('일위대가','R'+r)==='T') mats.add(o); }
+          del('일위대가', r); changed = true;
+        }
+        /* 호표 뒤에 붙은 빈 간격 행도 함께 정리 */
+        for(let r=g.end+1; r<=WB.meta['일위대가'].maxR; r++){
+          if(isDeleted('일위대가', r)) continue;
+          if(rawv('일위대가','N'+r) || String(rawv('일위대가','A'+r)||'').trim() || String(rawv('일위대가','B'+r)||'').trim()) break;
           del('일위대가', r); changed = true;
         }
       }
@@ -5038,7 +5056,7 @@ document.getElementById('btnImpOpen').onclick = async ()=>{
   const m = WB.meta['공종별내역서'].maxR, drop = [];
   for(let r=1;r<=m;r++) if(isBoqItem(r) && !keep.has(r)) drop.push(r);
   if(drop.length) cascadeDelete(drop);
-  const pruned = pruneOrphanHopyo();
+  const pruned = pruneOrphanHopyo(); _pruneSig = '';
   let emptied = 0;
   boqBlocks().forEach(b=>{
     if(blockItems(b).length) return;
