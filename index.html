@@ -834,6 +834,36 @@ body.sbon.sbmin #aiBack{right:276px}
       
     </div>
   </section>
+  <section id="pane-recipe" class="pane" hidden="">
+    <div class="panel2">
+      <div class="ph"><b>레시피 모음</b><span>자주 함께 쓰는 일위대가(호표)를 묶어 카드로 저장합니다 — 예: 「바닥재 교체」= 기존 바닥 철거 + 비닐타일 깔기 + 걸레받이. 카드 하나로 내역서에 한 번에 담습니다</span></div>
+      <div class="prow">
+        <button class="mini primaryish" id="btnRcpNew">새 레시피</button>
+        <button class="mini" id="btnRcpExport" title="레시피 전체를 JSON 파일로 내려받습니다 — data/recipes.json 으로 두면 앱에 내장됩니다">파일로 저장</button>
+        <input type="file" id="rcpFile" accept=".json" hidden="">
+        <button class="mini" id="btnRcpImport" title="저장해 둔 레시피 파일을 읽어 합칩니다">파일 불러오기</button>
+        <input class="mini" id="rcpQ" type="search" placeholder="레시피·호표 찾기" style="width:170px">
+        <span id="rcpInfo" style="font-size:12px; color:var(--sub)"></span>
+      </div>
+      <div id="rcpEdit" class="libcard" hidden="" style="margin:14px 0 4px; max-width:820px">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px">
+          <input id="rcpName" placeholder="레시피 이름 (예: 바닥재 교체)" style="flex:1 1 220px; font:inherit; font-size:14px; font-weight:700; padding:6px 10px; border:1px solid var(--line); background:var(--paper)">
+          <input id="rcpMemo" placeholder="메모 (선택)" style="flex:2 1 260px; font:inherit; font-size:12.5px; padding:6px 10px; border:1px solid var(--line); background:var(--paper)">
+        </div>
+        <div style="position:relative; margin-bottom:8px">
+          <input id="rcpFind" type="search" placeholder="이 내역서의 일위대가목록에서 호표 찾아 추가 — 품명·규격 입력" style="width:100%; box-sizing:border-box; font:inherit; font-size:12.5px; padding:6px 10px; border:1px solid var(--line); background:var(--paper)">
+          <div class="searchlist" id="rcpFindList"></div>
+        </div>
+        <table class="mt" id="rcpItems" style="width:100%"></table>
+        <div class="rb">
+          <button class="mini primaryish" id="btnRcpSave">저장</button>
+          <button class="mini" id="btnRcpCancel">취소</button>
+          <span style="font-size:11.5px; color:var(--sub); margin-left:auto">비율 — 레시피 수량 1당 이 호표의 수량. 담을 때 입력한 수량에 곱합니다</span>
+        </div>
+      </div>
+      <div class="libgrid" id="rcpGrid"></div>
+    </div>
+  </section>
   <section id="pane-qty" class="pane" hidden="">
     <div class="bar">
       <span class="sheetname">물량산출</span>
@@ -1253,6 +1283,7 @@ footer{max-width:1120px; margin:26px auto 40px; padding:0 20px; font-size:11.5px
 #toast{position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); border-radius:4px; padding:10px 20px; font-size:13.5px; z-index:80; opacity:0; transition:opacity .25s; pointer-events:none; max-width:90vw}
 #toast.on{opacity:1}
 .printhead{display:none}
+tr.blankrow td.editable{background:repeating-linear-gradient(135deg, transparent 0 6px, rgba(0,0,0,.025) 6px 7px)}
 /* ---------- EDUCOST 인트로 ---------- */
 #intro{position:fixed; inset:0; z-index:100; overflow-y:auto; scroll-behavior:smooth; background:#094D27; color:#FAFAFA;}
 #intro.off{display:none}
@@ -3411,6 +3442,80 @@ function save(){ try{
 }
 const rowOf = addr => +addr.match(/\d+$/)[0];
 function isDeleted(sheet, row){ return !!(DEL[sheet] && DEL[sheet][row]); }
+/* 지운 행을 빈 행(괘선 유지)으로 남길지 — 내역서는 살아 있는 공종 블록 안의 행, 집계표는 공종 행. 출력양식을 그대로 지킵니다 */
+function isBlankRow(sh, r){
+  if(!isDeleted(sh, r)) return false;
+  if(sh === '공종별내역서'){
+    const b = boqBlocks().find(x=> r > x.start && r < x.end);
+    return !!b && !isDeleted(sh, b.start);
+  }
+  if(sh === '공종별집계표') return r >= 5 && !!String(rawv(sh,'N'+r)||'');
+  return false;
+}
+/* 한 페이지 본문 행 수 — 원본 첫 공종 블록(머리행~합계행) 크기를 따름 */
+function pageRows(){
+  const bs = boqBlocks().filter(b=>!isDeleted('공종별내역서', b.start));
+  const b = bs[0]; const n = b ? (b.end - b.start + 1) : 0;
+  return (n >= 5 && n <= 80) ? n : 25;
+}
+/* 수식 안의 행 참조를 at 이상이면 n만큼 내림 — 문자열 리터럴은 건너뜀 */
+function shiftRefsIn(f, curSheet, target, at, n){
+  if(!f) return f;
+  const parts = String(f).split(/("(?:[^"]|"")*")/);
+  for(let i=0;i<parts.length;i+=2){
+    parts[i] = parts[i].replace(/((?:'[^']+'|[A-Za-z0-9_.ㄱ-힝]+)!)?(?<![A-Za-z0-9_$ㄱ-힝])(\$?)([A-Z]{1,3})(\$?)(\d+)(?![\d(A-Za-z_ㄱ-힝])/g, (m, q, d1, col, d2, row)=>{
+      const sh = q ? q.slice(0, -1).replace(/^'|'$/g,'') : curSheet;
+      if(sh !== target) return m;
+      const rr = +row;
+      return (q||'') + d1 + col + d2 + (rr >= at ? rr + n : rr);
+    });
+  }
+  return parts.join('');
+}
+/* 시트 sh 의 at 행 앞에 n행을 끼워 넣음 — 셀·수식·덧씌움·삭제표시·병합·선택을 모두 내림 */
+function insertRows(sh, at, n){
+  const shiftMap = (o)=>{ if(!o) return o; const out={}; for(const k of Object.keys(o)){ const m=k.match(/^([A-Z]*)(\d+)$/); if(!m){ out[k]=o[k]; continue; } const r=+m[2]; out[m[1]+(r>=at? r+n : r)] = o[k]; } return out; };
+  const cells = {};
+  for(const a of Object.keys(WB.cells[sh])){ const m=a.match(/^([A-Z]+)(\d+)$/); const r=+m[2]; cells[m[1]+(r>=at? r+n : r)] = WB.cells[sh][a]; }
+  WB.cells[sh] = cells;
+  for(const s of Object.keys(WB.cells)) for(const a of Object.keys(WB.cells[s])){ const c=WB.cells[s][a]; if(c && c.f) c.f = shiftRefsIn(c.f, s, sh, at, n); }
+  for(const s of Object.keys(FOV)) for(const a of Object.keys(FOV[s])) FOV[s][a] = shiftRefsIn(FOV[s][a], s, sh, at, n);
+  OV[sh] = shiftMap(OV[sh]); FOV[sh] = shiftMap(FOV[sh]); DEL[sh] = shiftMap(DEL[sh]); ADD[sh] = shiftMap(ADD[sh]);
+  if(sh === '공종별내역서'){ SEL = shiftMap(SEL); SELG = shiftMap(SELG); }
+  if(sh === '공종별집계표') SELA = shiftMap(SELA);
+  const meta = WB.meta[sh];
+  meta.maxR += n;
+  if(meta.merges) meta.merges = meta.merges.map(m=> m.replace(/([A-Z]+)(\d+)/g, (x, c, r)=> c + (+r >= at ? +r + n : +r)));
+  if(meta.rowHt) meta.rowHt = shiftMap(meta.rowHt);
+  WBREPLACED = true; _grp = null;
+}
+/* 공종 블록에 빈 행이 없을 때 한 페이지 분량을 늘림 — 합계행이 다음 페이지 끝에 오도록 */
+function growBlock(block){
+  const n = pageRows(), sh = '공종별내역서', end = block.end, last = end - 1;
+  insertRows(sh, end, n);
+  const tot = end + n;
+  for(const cn of ['F','H','J','L','K','E','G','I']){
+    const c = WB.cells[sh][cn+tot];
+    if(c && c.f) c.f = c.f.replace(new RegExp('([A-Z]{1,3}\\$?)'+last+'(?!\\d)','g'), '$1'+(last+n));
+  }
+  for(let r=end; r<end+n; r++){
+    put(sh,'D'+r, {v:0, s:13});
+    ['E','G','I'].forEach(cn=> put(sh,cn+r, {v:0, s:14}));
+    put(sh,'F'+r, {f:'TRUNC(E'+r+'*D'+r+', 0)', v:0, s:14});
+    put(sh,'H'+r, {f:'TRUNC(G'+r+'*D'+r+', 0)', v:0, s:14});
+    put(sh,'J'+r, {f:'TRUNC(I'+r+'*D'+r+', 0)', v:0, s:14});
+    put(sh,'K'+r, {f:'TRUNC(E'+r+'+G'+r+'+I'+r+',0)', v:0, s:14});
+    put(sh,'L'+r, {f:'TRUNC(F'+r+'+H'+r+'+J'+r+',0)', v:0, s:14});
+    put(sh,'Q'+r, {v:block.code, s:1});
+    put(sh,'R'+r, {v:'T', s:1}); put(sh,'S'+r, {v:'F', s:1}); put(sh,'T'+r, {v:'F', s:1}); put(sh,'X'+r, {v:1, s:0});
+  }
+  block.end = tot;
+  return n;
+}
+function undelRow(sh, r){
+  if(DEL[sh]) delete DEL[sh][r];
+  ['A','B','C','D','E','F','G','H','I','J','K','L','N','Q','R','S','T'].forEach(cn=>{ if(OV[sh]) delete OV[sh][cn+r]; if(FOV[sh]) delete FOV[sh][cn+r]; });
+}
 
 const SHEETS = ['원가계산서','공종별집계표','공종별내역서','일위대가목록','일위대가','단가대비표'];
 const NOTES = {
@@ -3717,10 +3822,11 @@ function renderSheet(){
   h += '<tr class="frzrow">' + (pick?'<td class="rowhead pick gut g1"><input type="checkbox" data-pickall title="전체 선택"></td>':'') + '<td class="rowhead gut '+(pick?'g2':'g1')+'"></td>' + cols.map(i=>'<td class="rowhead">'+colName(i)+'</td>').join('') + '</tr>';
   let shown = 0;
   for(let r=1;r<=m.maxR;r++){
-    if(isDeleted(sh, r)) continue;
+    const blankRow = isDeleted(sh, r) && isBlankRow(sh, r);
+    if(isDeleted(sh, r) && !blankRow) continue;
     shown++;
-    const kind = rowKind(sh, r);
-    h += '<tr>';
+    const kind = blankRow ? '' : rowKind(sh, r);
+    h += blankRow ? '<tr class="blankrow" title="지운 행 — 빈 칸으로 남겨 출력양식을 지킵니다">' : '<tr>';
     if(pick && sh==='공종별집계표'){
       h += '<td class="rowhead pick gut g1">' + (isAggGong(r) ? '<input type="checkbox" data-picka="'+r+'"'+(SELA[r]?' checked':'')+' title="이 공종 선택">' : '') + '</td>';
     }
@@ -3741,7 +3847,7 @@ function renderSheet(){
       const cell = baseCell(sh, addr);
       const isOvr = !!(OV[sh] && OV[sh][addr]!==undefined);
       const isFov = !!(FOV[sh] && FOV[sh][addr]);
-      const hasVal = !!cell || isOvr || isFov || titleVal(sh, addr)!==undefined;
+      const hasVal = !blankRow && (!!cell || isOvr || isFov || titleVal(sh, addr)!==undefined);
       const v = hasVal ? C(sh, addr) : '';
       const cls = ['editable'];
       if(ci === cols[0] && !span) cls.push('frz');
@@ -3960,7 +4066,7 @@ function isBoqHead(r){
   return /^\d{6}\s/.test(String(rawv('공종별내역서','A'+r) || ''));
 }
 function isBoqRow(r){
-  if(r < 4 || isDeleted('공종별내역서', r)) return false;
+  if(r < 4 || (isDeleted('공종별내역서', r) && !isBlankRow('공종별내역서', r))) return false;
   if(isBoqHead(r)) return false;
   if(/합\s*계/.test(String(rawv('공종별내역서','A'+r)||''))) return false;
   return boqBlocks().some(b=>r > b.start && r < b.end);
@@ -4713,6 +4819,7 @@ function boqBlocks(){
 /* 체크한 행에 항목을 써 넣습니다 — 빈 행이든 기존 행이든. ref: 일위대가목록 행번호(호표) 또는 {std:[품명,규격,단위,재,노,경]} */
 function fillBoqRow(r, ref, name, spec, unit, qty){
   const blk = boqBlocks().find(b=> r > b.start && r < b.end); if(!blk) return false;
+  if(isDeleted('공종별내역서', r)) undelRow('공종별내역서', r);
   const S = (cn, v, f) => put('공종별내역서', cn+r, {f:f, v:v, s:(cn==='A'||cn==='B')?15:14});
   ['A','B','C','D','E','F','G','H','I','J','K','L','N','R','T'].forEach(cn=>{ if(OV['공종별내역서']) delete OV['공종별내역서'][cn+r]; if(FOV['공종별내역서']) delete FOV['공종별내역서'][cn+r]; });
   S('A', name); S('B', spec||''); S('C', unit||''); S('D', qty);
@@ -4735,10 +4842,13 @@ function addBoqItem(block, ref, name, spec, unit, qty, fromRow){
   let r = null;
   const st0 = (fromRow && fromRow>block.start && fromRow<block.end) ? fromRow : block.start+1;
   for(let i=st0; i<block.end; i++){
-    if(isDeleted('공종별내역서', i)) continue;
+    if(isDeleted('공종별내역서', i)){ if(isBlankRow('공종별내역서', i)){ r = i; undelRow('공종별내역서', i); break; } continue; }
     if(!baseCell('공종별내역서','A'+i) && !baseCell('공종별내역서','B'+i)){ r = i; break; }
   }
-  if(r===null) return null;
+  if(r===null){                                   /* 빈 행이 없으면 한 페이지 분량을 늘려 이어 씁니다 */
+    if(isDeleted('공종별내역서', block.start)) return null;
+    r = block.end; growBlock(block);
+  }
   const hopyo = (typeof ref === 'number') || ref.kind !== 'mat';
   const row = (typeof ref === 'number') ? ref : ref.row;
   const S = (cn, v, f) => put('공종별내역서', cn+r, {f:f, v:v, s:(cn==='A'||cn==='B')?15:14});
@@ -5441,6 +5551,171 @@ document.getElementById('btnEmptyAll').onclick = async ()=>{
   save(); renderWage(); renderRates(); renderSheet();
   toast(rows.length+'행을 비웠습니다.'+(emptied? ' 빈 공종 '+emptied+'개 정리':''));
 };
+
+/* ---------- 레시피 모음 — 호표 조합 카드 ---------- */
+const RCPKEY = 'EDUCOST-레시피-v1';
+let RCP = []; try{ RCP = JSON.parse(localStorage.getItem(RCPKEY)||'[]'); if(!Array.isArray(RCP)) RCP = []; }catch(e){ RCP = []; }
+let RCP_EDIT = null;                                  /* 편집 중 {id, name, memo, items:[{code,name,spec,unit,ratio}]} */
+/* 앱에 내장된 레시피(data/recipes.json) — 공개 데이터. 이 PC의 레시피와 id 기준으로 합칩니다 */
+function rcpMerge(list){
+  if(!Array.isArray(list)) return 0; let n = 0;
+  list.forEach(x=>{
+    if(!x || typeof x.name !== 'string' || !Array.isArray(x.items)) return;
+    const clean = {id: String(x.id || ('r'+Date.now().toString(36)+n)), name: x.name.slice(0,120), memo: String(x.memo||'').slice(0,300),
+      items: x.items.filter(it=>it && typeof it.name === 'string').map(it=>({code:String(it.code||''), name:it.name, spec:String(it.spec||''), unit:String(it.unit||''), ratio:Number(it.ratio)||1}))};
+    const i = RCP.findIndex(y=>y.id===clean.id);
+    if(i >= 0){ if(JSON.stringify(RCP[i]) !== JSON.stringify(clean)){ RCP[i] = clean; n++; } }
+    else { RCP.push(clean); n++; }
+  });
+  return n;
+}
+(async ()=>{
+  let seed = null;
+  try{ const t = document.getElementById('rcpSeed'); if(t && t.textContent.trim()) seed = JSON.parse(t.textContent); }catch(e){}
+  if(!seed){ try{ const r = await fetch('data/recipes.json', {cache:'no-store'}); if(r.ok) seed = await r.json(); }catch(e){} }
+  if(seed && rcpMerge(seed)){ rcpSave(); if(!document.getElementById('pane-recipe').hidden) renderRcp(); }
+})();
+document.getElementById('btnRcpExport').onclick = ()=>{
+  if(!RCP.length) return toast('저장할 레시피가 없습니다.');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(RCP, null, 1)], {type:'application/json'}));
+  a.download = 'recipes.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  toast('레시피 '+RCP.length+'개를 recipes.json 으로 내려받았습니다.');
+};
+document.getElementById('btnRcpImport').onclick = ()=> document.getElementById('rcpFile').click();
+document.getElementById('rcpFile').addEventListener('change', async e=>{
+  const f = e.target.files[0]; e.target.value = ''; if(!f) return;
+  try{ const n = rcpMerge(JSON.parse(await f.text())); rcpSave(); renderRcp(); toast(n ? '레시피 '+n+'개를 합쳤습니다.' : '새로 합칠 레시피가 없습니다.'); }
+  catch(err){ toast('레시피 파일을 읽지 못했습니다: '+err.message); }
+});
+function rcpSave(){ try{ localStorage.setItem(RCPKEY, JSON.stringify(RCP)); }catch(e){ toast('레시피를 저장하지 못했습니다 — 저장 공간을 확인하십시오.'); } }
+/* 이 내역서의 일위대가목록에서 호표 행 찾기 — 코드 → 품명+규격 → 품명 순 */
+function rcpFindRow(it){
+  const mx = WB.meta['일위대가목록'].maxR; let byName = null;
+  for(let r=4;r<=mx;r++){
+    if(isDeleted('일위대가목록', r)) continue;
+    const c = String(rawv('일위대가목록','A'+r)||''); if(!c) continue;
+    if(it.code && c === it.code) return r;
+    const nm = String(rawv('일위대가목록','B'+r)||'').trim(), sp = String(rawv('일위대가목록','C'+r)||'').trim();
+    if(nm === String(it.name||'').trim()){ if(sp === String(it.spec||'').trim()) return r; if(byName === null) byName = r; }
+  }
+  return byName;
+}
+function rcpListRows(q){
+  const mx = WB.meta['일위대가목록'].maxR, out = [], qq = String(q||'').trim().toLowerCase();
+  for(let r=4;r<=mx;r++){
+    if(isDeleted('일위대가목록', r)) continue;
+    const c = String(rawv('일위대가목록','A'+r)||''); const nm = String(rawv('일위대가목록','B'+r)||''); if(!c || !nm) continue;
+    const sp = String(rawv('일위대가목록','C'+r)||''), un = String(rawv('일위대가목록','D'+r)||'');
+    if(qq && (nm+' '+sp).toLowerCase().indexOf(qq) < 0) continue;
+    out.push({r, code:c, name:nm, spec:sp, unit:un, price: Math.round(Number(C('일위대가목록','H'+r))||0)});
+    if(out.length >= 30) break;
+  }
+  return out;
+}
+function renderRcp(){
+  const grid = document.getElementById('rcpGrid'), q = String(document.getElementById('rcpQ').value||'').trim().toLowerCase();
+  const list = RCP.filter(x=> !q || (x.name+' '+(x.memo||'')+' '+x.items.map(i=>i.name+' '+i.spec).join(' ')).toLowerCase().indexOf(q) >= 0);
+  document.getElementById('rcpInfo').textContent = RCP.length ? ('레시피 '+RCP.length+'개' + (list.length!==RCP.length ? ' / 검색 '+list.length+'개' : '')) : '';
+  if(!RCP.length){ grid.innerHTML = '<div class="empty" style="grid-column:1/-1">아직 레시피가 없습니다. 「새 레시피」를 눌러 호표를 조합하십시오.</div>'; return; }
+  grid.innerHTML = list.map(x=>{
+    const rows = x.items.map(it=>{
+      const lr = rcpFindRow(it), miss = !lr;
+      const pr = lr ? Math.round(Number(C('일위대가목록','H'+lr))||0) : 0;
+      return '<tr'+(miss?' style="color:var(--danger)"':'')+'><td>'+esc(it.name)+(miss?' <span style="font-size:10.5px">(이 내역서에 없음)</span>':'')+'</td><td>'+esc(it.spec||'')+'</td><td style="text-align:center">'+esc(it.unit||'')+'</td><td class="num" style="text-align:right">'+(Number(it.ratio)||1)+'</td><td class="num" style="text-align:right">'+(pr? pr.toLocaleString('ko-KR'):'')+'</td></tr>';
+    }).join('');
+    const sum = x.items.reduce((s,it)=>{ const lr = rcpFindRow(it); return s + (lr ? (Math.round(Number(C('일위대가목록','H'+lr))||0) * (Number(it.ratio)||1)) : 0); }, 0);
+    return '<div class="libcard" data-rcp="'+x.id+'"><b>'+esc(x.name)+'</b>'
+      + (x.memo ? '<div class="rd" style="margin-bottom:6px">'+esc(x.memo)+'</div>' : '')
+      + '<div class="amt">단위당 '+sum.toLocaleString('ko-KR')+'원 <span style="font-weight:500; color:var(--sub)">· 호표 '+x.items.length+'개</span></div>'
+      + '<table class="mt" style="width:100%; margin-bottom:4px"><thead><tr><th>품명</th><th>규격</th><th>단위</th><th>비율</th><th>단가</th></tr></thead><tbody>'+rows+'</tbody></table>'
+      + '<div class="rb"><button class="mini primaryish" data-rcpput="'+x.id+'">내역서에 담기</button><button class="mini" data-rcpedit="'+x.id+'">고치기</button><button class="mini" data-rcpdup="'+x.id+'">복제</button><button class="mini" data-rcpdel="'+x.id+'" style="color:var(--danger); margin-left:auto">지우기</button></div></div>';
+  }).join('');
+}
+function rcpOpenEdit(x){
+  RCP_EDIT = x ? JSON.parse(JSON.stringify(x)) : {id:'r'+Date.now().toString(36), name:'', memo:'', items:[]};
+  document.getElementById('rcpName').value = RCP_EDIT.name; document.getElementById('rcpMemo').value = RCP_EDIT.memo||'';
+  document.getElementById('rcpFind').value = ''; document.getElementById('rcpFindList').classList.remove('on');
+  document.getElementById('rcpEdit').hidden = false; renderRcpItems();
+  document.getElementById('rcpName').focus();
+}
+function renderRcpItems(){
+  const t = document.getElementById('rcpItems');
+  if(!RCP_EDIT.items.length){ t.innerHTML = '<tr><td style="color:var(--sub); text-align:center; padding:14px">위 칸에서 호표를 찾아 추가하십시오.</td></tr>'; return; }
+  t.innerHTML = '<thead><tr><th>품명</th><th>규격</th><th>단위</th><th style="width:80px">비율</th><th style="width:40px"></th></tr></thead><tbody>'
+    + RCP_EDIT.items.map((it,i)=>'<tr><td>'+esc(it.name)+'</td><td>'+esc(it.spec||'')+'</td><td style="text-align:center">'+esc(it.unit||'')+'</td>'
+      + '<td><input data-rcpratio="'+i+'" value="'+(Number(it.ratio)||1)+'" style="width:64px; text-align:right; font:inherit; font-size:12.5px; padding:3px 6px; border:1px solid var(--line); background:var(--paper)"></td>'
+      + '<td style="text-align:center"><button class="mini" data-rcprm="'+i+'" title="빼기">×</button></td></tr>').join('') + '</tbody>';
+}
+document.getElementById('btnRcpNew').onclick = ()=> rcpOpenEdit(null);
+document.getElementById('btnRcpCancel').onclick = ()=>{ RCP_EDIT = null; document.getElementById('rcpEdit').hidden = true; };
+document.getElementById('btnRcpSave').onclick = ()=>{
+  if(!RCP_EDIT) return;
+  const name = document.getElementById('rcpName').value.trim();
+  if(!name) return toast('레시피 이름을 넣으십시오.');
+  if(!RCP_EDIT.items.length) return toast('호표를 하나 이상 추가하십시오.');
+  RCP_EDIT.name = name; RCP_EDIT.memo = document.getElementById('rcpMemo').value.trim();
+  const i = RCP.findIndex(x=>x.id===RCP_EDIT.id);
+  if(i >= 0) RCP[i] = RCP_EDIT; else RCP.unshift(RCP_EDIT);
+  rcpSave(); RCP_EDIT = null; document.getElementById('rcpEdit').hidden = true; renderRcp();
+  toast('「'+name+'」 레시피를 저장했습니다.');
+};
+document.getElementById('rcpQ').addEventListener('input', renderRcp);
+document.getElementById('rcpFind').addEventListener('input', e=>{
+  const list = document.getElementById('rcpFindList'), q = e.target.value.trim();
+  if(!q){ list.classList.remove('on'); return; }
+  const rows = rcpListRows(q);
+  list.innerHTML = rows.length ? rows.map(x=>'<div class="sitem" data-rcppick="'+x.r+'"><div style="flex:1"><div class="nm">'+esc(x.name)+'</div><div class="sp">'+esc(x.spec)+(x.unit?' · '+esc(x.unit):'')+'</div></div><div class="pr" style="font-variant-numeric:tabular-nums">'+x.price.toLocaleString('ko-KR')+'</div></div>').join('')
+    : '<div class="empty">이 내역서의 일위대가목록에 없습니다.</div>';
+  list.classList.add('on');
+});
+document.getElementById('rcpFindList').addEventListener('click', e=>{
+  const it = e.target.closest('[data-rcppick]'); if(!it || !RCP_EDIT) return;
+  const r = +it.dataset.rcppick;
+  RCP_EDIT.items.push({code:String(rawv('일위대가목록','A'+r)||''), name:String(rawv('일위대가목록','B'+r)||''), spec:String(rawv('일위대가목록','C'+r)||''), unit:String(rawv('일위대가목록','D'+r)||''), ratio:1});
+  document.getElementById('rcpFind').value = ''; document.getElementById('rcpFindList').classList.remove('on');
+  renderRcpItems();
+});
+document.getElementById('rcpItems').addEventListener('click', e=>{
+  const b = e.target.closest('[data-rcprm]'); if(!b || !RCP_EDIT) return;
+  RCP_EDIT.items.splice(+b.dataset.rcprm, 1); renderRcpItems();
+});
+document.getElementById('rcpItems').addEventListener('change', e=>{
+  const i = e.target.closest('[data-rcpratio]'); if(!i || !RCP_EDIT) return;
+  RCP_EDIT.items[+i.dataset.rcpratio].ratio = Number(String(i.value).replace(/,/g,'')) || 1;
+});
+document.getElementById('rcpGrid').addEventListener('click', async e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  const find = k => RCP.find(x=>x.id===b.dataset[k]);
+  if(b.dataset.rcpedit){ const x = find('rcpedit'); if(x) rcpOpenEdit(x); return; }
+  if(b.dataset.rcpdup){ const x = find('rcpdup'); if(!x) return; const c = JSON.parse(JSON.stringify(x)); c.id = 'r'+Date.now().toString(36); c.name = x.name+' (복제)'; RCP.unshift(c); rcpSave(); renderRcp(); return; }
+  if(b.dataset.rcpdel){ const x = find('rcpdel'); if(!x) return; if(!(await uiConfirm('「'+x.name+'」 레시피를 지웁니다.'))) return; RCP = RCP.filter(y=>y!==x); rcpSave(); renderRcp(); return; }
+  if(b.dataset.rcpput){
+    const x = find('rcpput'); if(!x) return;
+    const blocks = boqBlocks().filter(bb=>!isDeleted('공종별내역서', bb.start));
+    if(!blocks.length) return toast('공종이 없습니다. 내역서 탭에서 「공종 추가」로 먼저 만드십시오.');
+    let blk = null, fromR = null;
+    if(curSheet === '공종별내역서' && sel){ const sr = rowOf(sel); blk = blocks.find(bb=>sr > bb.start && sr < bb.end) || null; if(blk) fromR = sr; }
+    if(!blk){
+      const pick = await uiPrompt('담을 공종 번호를 넣으십시오.\n' + blocks.map((bb,i)=>(i+1)+'. '+bb.label).join('\n'), String(blocks.length));
+      if(pick === null) return;
+      blk = blocks[(+pick)-1]; if(!blk) return toast('공종 번호가 맞지 않습니다.');
+    }
+    const qs = await uiPrompt('「'+x.name+'」 수량 — 각 호표에 비율을 곱해 담습니다.', '1');
+    if(qs === null) return;
+    const qty = Number(String(qs).replace(/,/g,'')) || 1;
+    let ok = 0; const miss = [];
+    x.items.forEach(it=>{
+      const lr = rcpFindRow(it); if(!lr){ miss.push(it.name); return; }
+      const r = addBoqItem(blk, lr, rawv('일위대가목록','B'+lr), rawv('일위대가목록','C'+lr)||'', rawv('일위대가목록','D'+lr)||'', Math.round(qty*(Number(it.ratio)||1)*1000)/1000, fromR);
+      if(r){ ok++; fromR = r+1; }
+    });
+    _grp = null; save(); renderWage(); renderRates();
+    curSheet = '공종별내역서'; renderSheet(); goSheetsTab();
+    toast('「'+blk.label+'」에 「'+x.name+'」 '+ok+'건을 담았습니다.' + (miss.length ? ' · 이 내역서에 없는 호표 '+miss.length+'개 제외 ('+miss.join(', ')+')' : ''));
+  }
+});
+
 function goSheetsTab(){
   if(document.getElementById('pane-sheet').hidden){
     const b = [...tabs.children].find(x=>x.dataset.t==='sheets');
@@ -6195,7 +6470,14 @@ function sheetXml(sh, withFormula){
   }
   if(firstVal && hdRow && firstVal <= hdRow) firstVal = hdRow + 1;
   for(let r=1;r<=meta.maxR;r++){
-    if(isDeleted(sh, r)){ rows[r] = '<row r="'+r+'" ht="0" customHeight="1" hidden="1"/>'; continue; }   /* 지운 행은 빈 줄로 남기지 않고 숨김 */
+    const keepForm = (sh === '공종별내역서' || sh === '공종별집계표');
+    if(isDeleted(sh, r)){
+      if(!isBlankRow(sh, r)){ rows[r] = '<row r="'+r+'" ht="0" customHeight="1" hidden="1"/>'; continue; }   /* 지운 행은 빈 줄로 남기지 않고 숨김 */
+      const bc = [];                                                                                    /* 양식 유지 — 빈 괘선 행 */
+      for(let ci=1; ci<=vis; ci++){ if(hiddenCol.has(ci)) continue; const a3 = colName(ci)+r; bc.push('<c r="'+a3+'" s="'+(base + xfOf(sh, r, a3, '', ''))+'"/>'); }
+      rows[r] = '<row r="'+r+'" ht="'+ROW_HT(sh, '')+'" customHeight="1">'+bc.join('')+'</row>';
+      continue;
+    }
     const kind = rowKind(sh, r);
     const cs = [];
     let hasVal = (kind !== 'title' && kind !== 'sub')
@@ -6230,10 +6512,7 @@ function sheetXml(sh, withFormula){
     const ht = (ST.orig && meta.rowHt && meta.rowHt[r]) ? meta.rowHt[r] : ROW_HT(sh, kind);
     /* 표 안쪽의 빈 항목 행(값이 하나도 없는 줄)도 숨겨 빈 셀이 이어지지 않게 합니다 */
     let emptyRow = kind === '' && !cs.some(x=> /<v>|<is>/.test(x));
-    if(sh === '공종별집계표' && kind === 'grp' && r > hdRow){                         /* 항목이 모두 지워져 합계 0인 공종은 내보내지 않음 */
-      const z = ['F','H','J','L'].every(cn=> !Number(C(sh, cn+r)));
-      if(z) emptyRow = true;
-    }
+    if(keepForm && r <= lastVal) emptyRow = false;                                     /* 표 안쪽 빈 행은 양식대로 남김 */
     if(emptyRow && r > hdRow) rows[r] = '<row r="'+r+'" ht="0" customHeight="1" hidden="1"/>';
     else if(cs.length) rows[r] = '<row r="'+r+'" ht="'+ht+'" customHeight="1">'+cs.join('')+'</row>';
   }
@@ -6662,7 +6941,7 @@ document.getElementById('govApply').onclick = ()=>{
     if(r){ ok++; fromR = r+1; } else full++;
   });
   curSheet = '공종별내역서'; _grp = null; save(); renderWage(); renderRates(); renderSheet(); syncGovWhere();
-  toast('「' + b.label + '」 에 ' + ok + '개 항목을 담았습니다.' + (full ? ' (빈 행 부족 ' + full + '건 — 공종 추가로 행을 늘리십시오)' : ''));
+  toast('「' + b.label + '」 에 ' + ok + '개 항목을 담았습니다.' + (full ? ' (넣지 못한 항목 ' + full + '건)' : ''));
 };
 /* ---------- 제비율표 사이드바 ---------- */
 function renderRateSide(){
@@ -6918,7 +7197,7 @@ document.getElementById('btnIlwiAdd').onclick = ()=>{
   if(!blk) blk = blocks[blocks.length-1];
   const qty = Number(String(document.getElementById('ilwiQty').value).replace(/,/g,'')) || 1;
   const r = addBoqItem(blk, lr, rawv('일위대가목록','B'+lr), rawv('일위대가목록','C'+lr)||'', rawv('일위대가목록','D'+lr)||'', qty, fromR);
-  if(!r) return toast('「'+blk.label+'」에 빈 행이 없습니다. 공종 추가로 행을 늘리십시오.');
+  if(!r) return toast('「'+blk.label+'」에 넣지 못했습니다.');
   curSheet = '공종별내역서'; SEL = {}; SEL[r] = 1; _grp = null;
   save(); renderWage(); renderRates(); renderSheet(); syncIlwiWhere();
   toast('「'+blk.label+'」에 '+String(rawv('일위대가목록','B'+lr)||'')+' 1건을 담았습니다. 집계표·원가계산서까지 반영됩니다.');
@@ -7489,15 +7768,16 @@ document.getElementById('btnQtyNew').onclick = ()=>{ const t = document.getEleme
 
 /* ---------- 탭 ---------- */
 const tabs = document.getElementById('tabs');
-tabs.innerHTML = '<button data-t="info" class="on">공사정보</button><button data-t="sheets">내역서</button><button data-t="qty">물량산출</button><button data-t="current">현행화</button><button data-t="lib">내역서 모음</button>';
+tabs.innerHTML = '<button data-t="info" class="on">공사정보</button><button data-t="sheets">내역서</button><button data-t="qty">물량산출</button><button data-t="current">현행화</button><button data-t="lib">내역서 모음</button><button data-t="recipe">레시피 모음</button>';
 tabs.addEventListener('click', e=>{
   const b = e.target.closest('button'); if(!b) return;
   [...tabs.children].forEach(x=>x.classList.toggle('on', x===b));
   const t = b.dataset.t;
-  const map = {info:'pane-info', current:'pane-current', sheets:'pane-sheet', lib:'pane-lib', qty:'pane-qty'};
+  const map = {info:'pane-info', current:'pane-current', sheets:'pane-sheet', lib:'pane-lib', qty:'pane-qty', recipe:'pane-recipe'};
   Object.entries(map).forEach(([k,id])=>{ document.getElementById(id).hidden = (k!==t); });
   if(t==='info') syncInfoNow();
   if(t==='lib') renderLib();
+  if(t==='recipe') renderRcp();
   if(t==='qty'){
     const f = document.getElementById('qtyFrame');
     if(!f.dataset.on){ f.dataset.on = '1'; const t = document.getElementById('qtyTpl'); if(t && t.innerHTML.length > 1000) f.srcdoc = '<!DOCTYPE html>' + t.innerHTML; else f.src = 'qty-dashboard.html'; }
