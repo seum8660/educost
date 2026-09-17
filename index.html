@@ -729,6 +729,7 @@ body.sbon.sbmin #aiBack{right:276px}
       <button class="mini" id="btnInfoLoad" title="저장해 둔 작업 파일(.educost)을 엽니다">파일 불러오기</button>
       <button class="mini primaryish" id="btnExportTop">내역서 엑셀 내보내기</button>
       <input type="file" id="sideFile" accept=".xlsx,.json" hidden="">
+      <div id="appVer" style="text-align:right; font-size:11px; color:var(--sub); margin-top:4px; letter-spacing:.02em">v1.0</div>
     </div>
   </div>
   <nav class="tabs" id="tabs"><button data-t="info" class="">공사정보</button><button data-t="sheets" class="on">내역서</button><button data-t="qty">물량산출</button><button data-t="current">현행화</button><button data-t="lib">내역서 모음</button></nav>
@@ -4014,6 +4015,10 @@ function cascadeDelete(rows){
     const rc = refCode(r); if(rc) hopyo.add(rc);
     del('공종별내역서', r);
   });
+  cascadeCodes(hopyo, mats);
+}
+/* 참조가 0인 호표·자재를 목록·일위대가·단가대비표에서 연쇄 정리 */
+function cascadeCodes(hopyo, mats){
   const groups = ilwiGroups();
   const listRow = code => {
     const m = WB.meta['일위대가목록'].maxR;
@@ -4044,6 +4049,19 @@ function cascadeDelete(rows){
     }
     if(!changed) break;
   }
+}
+/* 내역서 어느 항목도 쓰지 않는 호표를 정리 — 코드 추적이 되는 파일에서만 */
+function pruneOrphanHopyo(){
+  const lm = WB.meta['일위대가목록'].maxR, codes = [];
+  for(let r=4;r<=lm;r++){ const c = rawv('일위대가목록','A'+r); if(c && !isDeleted('일위대가목록', r)) codes.push(String(c)); }
+  if(!codes.length) return 0;
+  const used = codes.filter(c=>boqRefsHopyo(c) > 0);
+  if(!used.length) return 0;                      /* 추적 불가 파일 — 건드리지 않음 */
+  const orphan = new Set(codes.filter(c=>boqRefsHopyo(c) === 0));
+  if(!orphan.size) return 0;
+  const n = orphan.size;
+  cascadeCodes(orphan, new Set());
+  return n;
 }
 let SELA = {};
 function isAggGong(r){
@@ -4695,9 +4713,10 @@ function fillBoqRow(r, ref, name, spec, unit, qty){
 /* 체크한 행 — 항목 행뿐 아니라 공종 안의 빈 행도 포함 */
 function selRowsAny(){ return Object.keys(SEL).filter(r=>SEL[r]).map(Number).filter(r=> isBoqItem(r) || isBoqRow(r)); }
 let IMPKEEP = new Set(), IMPCAP = false, IMPNAME = '';
-function addBoqItem(block, ref, name, spec, unit, qty){
+function addBoqItem(block, ref, name, spec, unit, qty, fromRow){
   let r = null;
-  for(let i=block.start+1; i<block.end; i++){
+  const st0 = (fromRow && fromRow>block.start && fromRow<block.end) ? fromRow : block.start+1;
+  for(let i=st0; i<block.end; i++){
     if(isDeleted('공종별내역서', i)) continue;
     if(!baseCell('공종별내역서','A'+i) && !baseCell('공종별내역서','B'+i)){ r = i; break; }
   }
@@ -5019,6 +5038,7 @@ document.getElementById('btnImpOpen').onclick = async ()=>{
   const m = WB.meta['공종별내역서'].maxR, drop = [];
   for(let r=1;r<=m;r++) if(isBoqItem(r) && !keep.has(r)) drop.push(r);
   if(drop.length) cascadeDelete(drop);
+  const pruned = pruneOrphanHopyo();
   let emptied = 0;
   boqBlocks().forEach(b=>{
     if(blockItems(b).length) return;
@@ -5032,7 +5052,7 @@ document.getElementById('btnImpOpen').onclick = async ()=>{
   IMPKEEP = new Set();
   document.getElementById('impPick').hidden = true;
   goInfoStep2();
-  toast(keep.size+'행으로 새 내역서를 작성했습니다.'+(emptied? ' 빈 공종 '+emptied+'개 정리':'')+' · 공사정보를 확인한 뒤 내역서 탭으로 넘기십시오.');
+  toast(keep.size+'행으로 새 내역서를 작성했습니다.'+(emptied? ' 빈 공종 '+emptied+'개 정리':'')+(pruned? ' · 미사용 호표 '+pruned+'개 정리':'')+' · 공사정보를 확인한 뒤 내역서 탭으로 넘기십시오.');
 };
 document.getElementById('btnImpClear') && (document.getElementById('btnImpClear').onclick = async ()=>{
   const n = Object.values(ADD).reduce((s,o)=>s+Object.keys(o).length, 0);
@@ -6414,10 +6434,10 @@ function syncGovWhere(){
   if(mode === 'auto') mode = (curSheet === '단가대비표') ? 'djb' : (curSheet === '일위대가' ? 'ilwi' : 'boqnew');
   if(mode === 'boqnew'){
     lab.style.display = '';
-    w.innerHTML = boqBlocks().map((b,i)=>'<option value="'+i+'">'+esc(b.label)+'</option>').join('') || '<option value="">공종 없음</option>';
+    w.innerHTML = '<option value="">클릭한 칸 위치 (없으면 마지막 공종)</option>' + boqBlocks().map((b,i)=>'<option value="'+i+'">'+esc(b.label)+'</option>').join('');
   } else if(mode === 'ilwi'){
     lab.style.display = '';
-    w.innerHTML = ilwiBlocks().map((b,i)=>'<option value="'+i+'">'+esc(b.label)+'</option>').join('') || '<option value="">호표 없음</option>';
+    w.innerHTML = '<option value="">클릭한 칸 위치 (없으면 마지막 호표)</option>' + ilwiBlocks().map((b,i)=>'<option value="'+i+'">'+esc(b.label)+'</option>').join('');
   } else { lab.style.display = 'none'; w.innerHTML = ''; }
 }
 document.getElementById('govTarget').addEventListener('change', syncGovWhere);
@@ -6513,9 +6533,10 @@ function ilwiShiftDown(fromRow){
     }
   });
 }
-function ilwiAdd(block, d){
+function ilwiAdd(block, d, fromRow){
   let r = null;
-  for(let i=block.start+1; i<block.end; i++){
+  const st0 = (fromRow && fromRow>block.start && fromRow<block.end) ? fromRow : block.start+1;
+  for(let i=st0; i<block.end; i++){
     if(isDeleted('일위대가', i)) continue;
     if(!baseCell('일위대가','A'+i) && !baseCell('일위대가','B'+i)){ r = i; break; }
   }
@@ -6592,14 +6613,15 @@ document.getElementById('govApply').onclick = ()=>{
     const blocks = ilwiBlocks();
     if(!blocks.length) return toast('일위대가에 호표가 없습니다. 먼저 호표를 가져오십시오.');
     const wv = document.getElementById('govWhere').value;
-    let b = (wv !== '' && blocks[+wv]) || null;
+    let b = (wv !== '' && blocks[+wv]) || null, fromR = null;
     if(!b && curSheet === '일위대가' && sel){
       const r = rowOf(sel);
-      b = blocks.find(x=>r >= x.start && r <= x.end) || null;
+      b = blocks.find(x=>r > x.start && r < x.end) || null;
+      if(b) fromR = r;
     }
     if(!b) b = blocks[blocks.length-1];
     let ok = 0, full = 0;
-    picks.forEach(d=>{ const r = ilwiAdd(b, d); if(r) ok++; else full++; });
+    picks.forEach(d=>{ const r = ilwiAdd(b, d, fromR); if(r){ ok++; fromR = r+1; } else full++; });
     curSheet = '일위대가'; _grp = null; save(); renderSheet(); syncGovWhere();
     return toast('「' + b.label + '」 에 ' + ok + '건을 담았습니다.' + (full ? ' (빈 행 부족 ' + full + '건)' : ''));
   }
@@ -6608,17 +6630,18 @@ document.getElementById('govApply').onclick = ()=>{
   const blocks = boqBlocks();
   if(!blocks.length) return toast('공종이 없습니다. 「공종 추가」로 먼저 만드십시오.');
   const wv2 = document.getElementById('govWhere').value;
-  let b = (wv2 !== '' && blocks[+wv2]) || null;
+  let b = (wv2 !== '' && blocks[+wv2]) || null, fromR = null;
   if(!b && curSheet === '공종별내역서' && sel){
     const r = rowOf(sel);
-    b = blocks.find(x=>r >= x.start && r <= x.end) || null;
+    b = blocks.find(x=>r > x.start && r < x.end) || null;
+    if(b) fromR = r;
   }
   if(!b) b = blocks[blocks.length-1];
   let ok = 0, full = 0;
   picks.forEach(d=>{
     const dj = govMatRow(d);
-    const r = addBoqItem(b, {kind:'mat', row:dj}, d[1], d[2]||'', d[3]||'', 1);
-    if(r) ok++; else full++;
+    const r = addBoqItem(b, {kind:'mat', row:dj}, d[1], d[2]||'', d[3]||'', 1, fromR);
+    if(r){ ok++; fromR = r+1; } else full++;
   });
   curSheet = '공종별내역서'; _grp = null; save(); renderWage(); renderRates(); renderSheet(); syncGovWhere();
   toast('「' + b.label + '」 에 ' + ok + '개 항목을 담았습니다.' + (full ? ' (빈 행 부족 ' + full + '건 — 공종 추가로 행을 늘리십시오)' : ''));
@@ -6771,7 +6794,7 @@ function renderIlwiSide(){
 function syncIlwiWhere(){
   const w = document.getElementById('ilwiWhere'); if(!w) return;
   const keep = w.value;
-  w.innerHTML = boqBlocks().map((b,i)=>'<option value="'+i+'">'+esc(b.label)+'</option>').join('') || '<option value="">공종 없음</option>';
+  w.innerHTML = '<option value="">클릭한 칸 위치 (없으면 마지막 공종)</option>' + boqBlocks().map((b,i)=>'<option value="'+i+'">'+esc(b.label)+'</option>').join('');
   if(keep && w.querySelector('option[value="'+keep+'"]')) w.value = keep;
 }
 function ilwiListRow(label){
@@ -6868,9 +6891,15 @@ document.getElementById('btnIlwiAdd').onclick = ()=>{
   const blocks = boqBlocks();
   if(!blocks.length) return toast('공종이 없습니다. 「공종 추가」로 먼저 만드십시오.');
   const wv = document.getElementById('ilwiWhere').value;
-  const blk = (wv !== '' && blocks[+wv]) || blocks[blocks.length-1];
+  let blk = (wv !== '' && blocks[+wv]) || null, fromR = null;
+  if(!blk && curSheet === '공종별내역서' && sel){
+    const sr = rowOf(sel);
+    blk = blocks.find(x=>sr > x.start && sr < x.end) || null;
+    if(blk) fromR = sr;
+  }
+  if(!blk) blk = blocks[blocks.length-1];
   const qty = Number(String(document.getElementById('ilwiQty').value).replace(/,/g,'')) || 1;
-  const r = addBoqItem(blk, lr, rawv('일위대가목록','B'+lr), rawv('일위대가목록','C'+lr)||'', rawv('일위대가목록','D'+lr)||'', qty);
+  const r = addBoqItem(blk, lr, rawv('일위대가목록','B'+lr), rawv('일위대가목록','C'+lr)||'', rawv('일위대가목록','D'+lr)||'', qty, fromR);
   if(!r) return toast('「'+blk.label+'」에 빈 행이 없습니다. 공종 추가로 행을 늘리십시오.');
   curSheet = '공종별내역서'; SEL = {}; SEL[r] = 1; _grp = null;
   save(); renderWage(); renderRates(); renderSheet(); syncIlwiWhere();
